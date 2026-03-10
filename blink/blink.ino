@@ -1,48 +1,70 @@
-// Real-time WiFi Signal Strength Monitor
-// Linux pushes frame data via Bridge RPC call to "wifi_frame"
-#include <Arduino_LED_Matrix.h>
-#include <Arduino_RouterBridge.h>
+// ADC noise-seeded bouncing 2x2 square
+#include "Arduino_LED_Matrix.h"
 
 Arduino_LED_Matrix matrix;
 
-bool ledState = false;
-unsigned long lastBlink = 0;
+int x, y;
+int dx, dy;
 
-// Called by Linux side with 4 hex uint32s as a comma-separated string
-bool onWifiFrame(String frameStr) {
-  uint32_t frame[4] = {0, 0, 0, 0};
-  int idx = 0;
-  int start = 0;
-  for (int i = 0; i <= (int)frameStr.length() && idx < 4; i++) {
-    if (i == (int)frameStr.length() || frameStr[i] == ',') {
-      String part = frameStr.substring(start, i);
-      frame[idx++] = (uint32_t)strtoul(part.c_str(), NULL, 16);
-      start = i + 1;
+uint32_t adcNoiseSeed() {
+  uint32_t seed = 0;
+  for (int i = 0; i < 32; i++) {
+    seed = (seed << 1) | (analogRead(A0) & 1);
+  }
+  return seed;
+}
+
+void gridToFrame(uint8_t grid[8][13], uint32_t* frame) {
+  frame[0] = frame[1] = frame[2] = frame[3] = 0;
+  for (int r = 0; r < 8; r++) {
+    for (int c = 0; c < 13; c++) {
+      int bit = r * 13 + c;
+      if (grid[r][c]) {
+        frame[bit / 32] |= (1UL << (31 - (bit % 32)));
+      }
     }
   }
-  matrix.loadFrame(frame);
-  return true;
 }
 
 void setup() {
   matrix.begin();
-  matrix.clear();
+  randomSeed(adcNoiseSeed());
 
-  pinMode(LED3_G, OUTPUT);
-  digitalWrite(LED3_G, HIGH);
+  // Random starting position (within bounds for 2x2)
+  x = random(0, 12);  // 0..11 so x+1 <= 12
+  y = random(0, 7);   // 0..6 so y+1 <= 7
 
-  Bridge.begin();
-  Monitor.begin();
-  Bridge.provide("wifi_frame", onWifiFrame);
-  Monitor.println("WiFi Signal Monitor ready");
+  // Random velocity: -1 or +1 for each axis
+  dx = random(2) ? 1 : -1;
+  dy = random(2) ? 1 : -1;
 }
 
 void loop() {
-  unsigned long now = millis();
-  if (now - lastBlink >= 500) {
-    lastBlink = now;
-    ledState = !ledState;
-    digitalWrite(LED3_G, ledState ? LOW : HIGH);
-  }
-  delay(10);
+  uint8_t grid[8][13] = {0};
+
+  // Draw 2x2 square
+  grid[y][x] = 1;
+  grid[y][x+1] = 1;
+  grid[y+1][x] = 1;
+  grid[y+1][x+1] = 1;
+
+  uint32_t frame[4];
+  gridToFrame(grid, frame);
+  matrix.loadFrame(frame);
+
+  // Move
+  x += dx;
+  y += dy;
+
+  // Bounce off edges
+  if (x <= 0 || x >= 11) dx = -dx;
+  if (y <= 0 || y >= 6) dy = -dy;
+
+  // Clamp just in case
+  if (x < 0) x = 0;
+  if (x > 11) x = 11;
+  if (y < 0) y = 0;
+  if (y > 6) y = 6;
+
+  delay(80);
 }

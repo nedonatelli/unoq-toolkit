@@ -11,6 +11,520 @@ ROWS = 8
 COLS = 13
 LED_SIZE = 40
 PAD = 2
+
+# --- Pre-canned shapes (8 rows x 13 cols, 1=on 0=off) ---
+SHAPES = {
+    "Heart": [
+        [0,0,0,1,1,0,0,0,1,1,0,0,0],
+        [0,0,1,1,1,1,0,1,1,1,1,0,0],
+        [0,1,1,1,1,1,1,1,1,1,1,1,0],
+        [0,1,1,1,1,1,1,1,1,1,1,1,0],
+        [0,0,1,1,1,1,1,1,1,1,1,0,0],
+        [0,0,0,1,1,1,1,1,1,1,0,0,0],
+        [0,0,0,0,1,1,1,1,1,0,0,0,0],
+        [0,0,0,0,0,1,1,1,0,0,0,0,0],
+    ],
+    "Smiley": [
+        [0,0,0,0,1,1,1,1,1,0,0,0,0],
+        [0,0,0,1,0,0,0,0,0,1,0,0,0],
+        [0,0,1,0,0,1,0,1,0,0,1,0,0],
+        [0,0,1,0,0,0,0,0,0,0,1,0,0],
+        [0,0,1,0,1,0,0,0,1,0,1,0,0],
+        [0,0,1,0,0,1,1,1,0,0,1,0,0],
+        [0,0,0,1,0,0,0,0,0,1,0,0,0],
+        [0,0,0,0,1,1,1,1,1,0,0,0,0],
+    ],
+    "Star": [
+        [0,0,0,0,0,0,1,0,0,0,0,0,0],
+        [0,0,0,0,0,1,1,1,0,0,0,0,0],
+        [0,1,1,1,1,1,1,1,1,1,1,1,0],
+        [0,0,1,1,1,1,1,1,1,1,1,0,0],
+        [0,0,0,1,1,1,1,1,1,1,0,0,0],
+        [0,0,1,1,1,0,0,0,1,1,1,0,0],
+        [0,1,1,1,0,0,0,0,0,1,1,1,0],
+        [0,1,0,0,0,0,0,0,0,0,0,1,0],
+    ],
+    "Arrow Up": [
+        [0,0,0,0,0,0,1,0,0,0,0,0,0],
+        [0,0,0,0,0,1,1,1,0,0,0,0,0],
+        [0,0,0,0,1,1,1,1,1,0,0,0,0],
+        [0,0,0,1,1,1,1,1,1,1,0,0,0],
+        [0,0,0,0,0,1,1,1,0,0,0,0,0],
+        [0,0,0,0,0,1,1,1,0,0,0,0,0],
+        [0,0,0,0,0,1,1,1,0,0,0,0,0],
+        [0,0,0,0,0,1,1,1,0,0,0,0,0],
+    ],
+    "Arrow Right": [
+        [0,0,0,0,0,0,1,0,0,0,0,0,0],
+        [0,0,0,0,0,0,0,1,0,0,0,0,0],
+        [0,0,0,0,0,0,0,0,1,0,0,0,0],
+        [1,1,1,1,1,1,1,1,1,1,0,0,0],
+        [1,1,1,1,1,1,1,1,1,1,0,0,0],
+        [0,0,0,0,0,0,0,0,1,0,0,0,0],
+        [0,0,0,0,0,0,0,1,0,0,0,0,0],
+        [0,0,0,0,0,0,1,0,0,0,0,0,0],
+    ],
+    "Check": [
+        [0,0,0,0,0,0,0,0,0,0,0,1,0],
+        [0,0,0,0,0,0,0,0,0,0,1,1,0],
+        [0,0,0,0,0,0,0,0,0,1,1,0,0],
+        [0,0,0,0,0,0,0,0,1,1,0,0,0],
+        [0,1,0,0,0,0,0,1,1,0,0,0,0],
+        [0,1,1,0,0,0,1,1,0,0,0,0,0],
+        [0,0,1,1,0,1,1,0,0,0,0,0,0],
+        [0,0,0,1,1,1,0,0,0,0,0,0,0],
+    ],
+    "X Mark": [
+        [0,1,1,0,0,0,0,0,0,0,1,1,0],
+        [0,0,1,1,0,0,0,0,0,1,1,0,0],
+        [0,0,0,1,1,0,0,0,1,1,0,0,0],
+        [0,0,0,0,1,1,0,1,1,0,0,0,0],
+        [0,0,0,0,1,1,0,1,1,0,0,0,0],
+        [0,0,0,1,1,0,0,0,1,1,0,0,0],
+        [0,0,1,1,0,0,0,0,0,1,1,0,0],
+        [0,1,1,0,0,0,0,0,0,0,1,1,0],
+    ],
+    "Diamond": [
+        [0,0,0,0,0,0,1,0,0,0,0,0,0],
+        [0,0,0,0,0,1,0,1,0,0,0,0,0],
+        [0,0,0,0,1,0,0,0,1,0,0,0,0],
+        [0,0,0,1,0,0,0,0,0,1,0,0,0],
+        [0,0,0,1,0,0,0,0,0,1,0,0,0],
+        [0,0,0,0,1,0,0,0,1,0,0,0,0],
+        [0,0,0,0,0,1,0,1,0,0,0,0,0],
+        [0,0,0,0,0,0,1,0,0,0,0,0,0],
+    ],
+    "Music Note": [
+        [0,0,0,0,0,0,1,1,1,1,0,0,0],
+        [0,0,0,0,0,0,1,0,0,1,0,0,0],
+        [0,0,0,0,0,0,1,0,0,1,0,0,0],
+        [0,0,0,0,0,0,1,0,0,1,0,0,0],
+        [0,0,0,0,0,0,1,0,0,1,0,0,0],
+        [0,0,0,1,1,1,1,0,0,1,0,0,0],
+        [0,0,1,1,1,1,1,0,1,1,1,0,0],
+        [0,0,0,1,1,1,0,0,0,1,1,0,0],
+    ],
+    "Skull": [
+        [0,0,0,1,1,1,1,1,1,1,0,0,0],
+        [0,0,1,1,1,1,1,1,1,1,1,0,0],
+        [0,0,1,0,0,1,1,1,0,0,1,0,0],
+        [0,0,1,0,0,1,1,1,0,0,1,0,0],
+        [0,0,1,1,1,1,0,1,1,1,1,0,0],
+        [0,0,0,1,1,0,1,0,1,1,0,0,0],
+        [0,0,0,1,0,1,0,1,0,1,0,0,0],
+        [0,0,0,0,1,0,1,0,1,0,0,0,0],
+    ],
+}
+
+# --- Pre-canned animations (list of (shape_data, duration_ms)) ---
+def _make_frames(data_list):
+    return [([[bool(cell) for cell in row] for row in frame], dur) for frame, dur in data_list]
+
+ANIMATIONS = {}
+
+# Heartbeat
+ANIMATIONS["Heartbeat"] = lambda: _make_frames([
+    (SHAPES["Heart"], 400),
+    ([[False]*COLS for _ in range(ROWS)], 100),
+    (SHAPES["Heart"], 200),
+    ([[False]*COLS for _ in range(ROWS)], 600),
+])
+
+# Rain
+def _rain_frames():
+    import random
+    random.seed(42)
+    frames = []
+    frames = []
+    positions = {}  # col -> list of row positions
+    random.seed(42)
+    for f in range(10):
+        grid = [[False]*COLS for _ in range(ROWS)]
+        # Add new drops at top
+        if f % 2 == 0:
+            for _ in range(3):
+                c = random.randint(0, COLS - 1)
+                if c not in positions:
+                    positions[c] = []
+                positions[c].append(0)
+        # Draw and advance drops
+        new_positions = {}
+        for c, rows in positions.items():
+            new_rows = []
+            for r in rows:
+                if r < ROWS:
+                    grid[r][c] = True
+                    new_rows.append(r + 1)
+            if new_rows:
+                new_positions[c] = new_rows
+        positions = new_positions
+        frames.append(([row[:] for row in grid], 150))
+    return _make_frames([(f, d) for f, d in frames])
+
+ANIMATIONS["Rain"] = _rain_frames
+
+# Wave
+def _wave_frames():
+    import math
+    frames = []
+    for phase in range(8):
+        grid = [[False]*COLS for _ in range(ROWS)]
+        for c in range(COLS):
+            h = int(3 + 2.5 * math.sin(2 * math.pi * (c / COLS + phase / 8)))
+            for r in range(ROWS - h, ROWS):
+                grid[r][c] = True
+        frames.append((grid, 120))
+    return _make_frames([(f, d) for f, d in frames])
+
+ANIMATIONS["Wave"] = _wave_frames
+
+# Expanding diamond
+def _expand_frames():
+    frames = []
+    cx, cy = 6, 3.5
+    for size in range(1, 7):
+        grid = [[False]*COLS for _ in range(ROWS)]
+        for r in range(ROWS):
+            for c in range(COLS):
+                if abs(c - cx) + abs(r - cy) <= size and abs(c - cx) + abs(r - cy) >= size - 1:
+                    grid[r][c] = True
+        frames.append((grid, 150))
+    # Contract back
+    for size in range(5, 0, -1):
+        grid = [[False]*COLS for _ in range(ROWS)]
+        for r in range(ROWS):
+            for c in range(COLS):
+                if abs(c - cx) + abs(r - cy) <= size and abs(c - cx) + abs(r - cy) >= size - 1:
+                    grid[r][c] = True
+        frames.append((grid, 150))
+    return _make_frames([(f, d) for f, d in frames])
+
+ANIMATIONS["Pulse"] = _expand_frames
+
+# Scrolling marquee
+def _scroll_frames():
+    # Create a wide "HI" pattern and scroll it across
+    text_pattern = [
+        [1,0,1,0,1,1,0],
+        [1,0,1,0,0,1,0],
+        [1,1,1,0,0,1,0],
+        [1,0,1,0,0,1,0],
+        [1,0,1,0,1,1,1],
+    ]
+    text_h = len(text_pattern)
+    text_w = len(text_pattern[0])
+    total_w = COLS + text_w
+    frames = []
+    for offset in range(total_w):
+        grid = [[False]*COLS for _ in range(ROWS)]
+        y_off = (ROWS - text_h) // 2
+        for tr in range(text_h):
+            for tc in range(text_w):
+                col = COLS - offset + tc
+                if 0 <= col < COLS and text_pattern[tr][tc]:
+                    grid[y_off + tr][col] = True
+        frames.append((grid, 120))
+    return _make_frames([(f, d) for f, d in frames])
+
+ANIMATIONS["Scroll HI"] = _scroll_frames
+
+# Snake
+def _snake_frames():
+    # Snake that moves around the border
+    border_cells = []
+    for c in range(COLS): border_cells.append((0, c))
+    for r in range(1, ROWS): border_cells.append((r, COLS-1))
+    for c in range(COLS-2, -1, -1): border_cells.append((ROWS-1, c))
+    for r in range(ROWS-2, 0, -1): border_cells.append((r, 0))
+    length = 6
+    frames = []
+    for start in range(0, len(border_cells), 2):
+        grid = [[False]*COLS for _ in range(ROWS)]
+        for i in range(length):
+            idx = (start + i) % len(border_cells)
+            r, c = border_cells[idx]
+            grid[r][c] = True
+        frames.append((grid, 80))
+    return _make_frames([(f, d) for f, d in frames])
+
+ANIMATIONS["Snake"] = _snake_frames
+
+# Fireworks
+def _firework_frames():
+    frames = []
+    cx, cy = 6, 4
+    # Rise
+    for y in range(ROWS-1, cy, -1):
+        grid = [[False]*COLS for _ in range(ROWS)]
+        grid[y][cx] = True
+        frames.append((grid, 100))
+    # Explode
+    for radius in range(1, 5):
+        grid = [[False]*COLS for _ in range(ROWS)]
+        for r in range(ROWS):
+            for c in range(COLS):
+                d = ((r - cy)**2 + (c - cx)**2) ** 0.5
+                if abs(d - radius) < 1.0:
+                    grid[r][c] = True
+        frames.append((grid, 120))
+    # Fade
+    frames.append(([[False]*COLS for _ in range(ROWS)], 300))
+    return _make_frames([(f, d) for f, d in frames])
+
+ANIMATIONS["Firework"] = _firework_frames
+
+# --- Live sketches (generative code that runs on-board) ---
+# Each returns a complete .ino sketch string
+LIVE_SKETCHES = {
+    "ADC Noise Random": '''\
+// ADC noise-seeded random LED matrix
+#include "Arduino_LED_Matrix.h"
+
+Arduino_LED_Matrix matrix;
+uint32_t frame[4];
+
+uint32_t adcNoiseSeed() {
+  uint32_t seed = 0;
+  for (int i = 0; i < 32; i++) {
+    seed = (seed << 1) | (analogRead(A0) & 1);
+  }
+  return seed;
+}
+
+void setup() {
+  matrix.begin();
+  randomSeed(adcNoiseSeed());
+}
+
+void loop() {
+  // Re-seed periodically from ADC noise for fresh entropy
+  randomSeed(adcNoiseSeed());
+
+  for (int i = 0; i < 4; i++) {
+    frame[i] = 0;
+    for (int b = 0; b < 32; b++) {
+      if (random(2)) {
+        frame[i] |= (1UL << (31 - b));
+      }
+    }
+  }
+  // Mask off unused bits (only 104 of 128 bits matter)
+  frame[3] &= 0xFF000000;
+
+  matrix.loadFrame(frame);
+  delay(100);
+}
+''',
+    "ADC Noise Rain": '''\
+// ADC noise-seeded rain effect
+#include "Arduino_LED_Matrix.h"
+
+Arduino_LED_Matrix matrix;
+uint8_t grid[8][13] = {0};
+
+uint32_t adcNoiseSeed() {
+  uint32_t seed = 0;
+  for (int i = 0; i < 32; i++) {
+    seed = (seed << 1) | (analogRead(A0) & 1);
+  }
+  return seed;
+}
+
+void gridToFrame(uint32_t* frame) {
+  frame[0] = frame[1] = frame[2] = frame[3] = 0;
+  for (int r = 0; r < 8; r++) {
+    for (int c = 0; c < 13; c++) {
+      int bit = r * 13 + c;
+      if (grid[r][c]) {
+        frame[bit / 32] |= (1UL << (31 - (bit % 32)));
+      }
+    }
+  }
+}
+
+void setup() {
+  matrix.begin();
+  randomSeed(adcNoiseSeed());
+}
+
+void loop() {
+  // Shift all rows down
+  for (int r = 7; r > 0; r--) {
+    for (int c = 0; c < 13; c++) {
+      grid[r][c] = grid[r-1][c];
+    }
+  }
+  // Clear top row and add new random drops
+  for (int c = 0; c < 13; c++) {
+    grid[0][c] = 0;
+  }
+  // Re-seed from ADC noise and spawn 1-3 drops
+  randomSeed(adcNoiseSeed());
+  int nDrops = random(1, 4);
+  for (int i = 0; i < nDrops; i++) {
+    grid[0][random(13)] = 1;
+  }
+
+  uint32_t frame[4];
+  gridToFrame(frame);
+  matrix.loadFrame(frame);
+  delay(120);
+}
+''',
+    "ADC Noise Life": '''\
+// ADC noise-seeded Game of Life
+#include "Arduino_LED_Matrix.h"
+
+Arduino_LED_Matrix matrix;
+uint8_t grid[8][13] = {0};
+uint8_t next_grid[8][13] = {0};
+int generation = 0;
+
+uint32_t adcNoiseSeed() {
+  uint32_t seed = 0;
+  for (int i = 0; i < 32; i++) {
+    seed = (seed << 1) | (analogRead(A0) & 1);
+  }
+  return seed;
+}
+
+void gridToFrame(uint32_t* frame) {
+  frame[0] = frame[1] = frame[2] = frame[3] = 0;
+  for (int r = 0; r < 8; r++) {
+    for (int c = 0; c < 13; c++) {
+      int bit = r * 13 + c;
+      if (grid[r][c]) {
+        frame[bit / 32] |= (1UL << (31 - (bit % 32)));
+      }
+    }
+  }
+}
+
+void randomize() {
+  randomSeed(adcNoiseSeed());
+  for (int r = 0; r < 8; r++)
+    for (int c = 0; c < 13; c++)
+      grid[r][c] = random(2);
+  generation = 0;
+}
+
+int countNeighbors(int r, int c) {
+  int count = 0;
+  for (int dr = -1; dr <= 1; dr++) {
+    for (int dc = -1; dc <= 1; dc++) {
+      if (dr == 0 && dc == 0) continue;
+      int nr = (r + dr + 8) % 8;
+      int nc = (c + dc + 13) % 13;
+      count += grid[nr][nc];
+    }
+  }
+  return count;
+}
+
+void step() {
+  for (int r = 0; r < 8; r++) {
+    for (int c = 0; c < 13; c++) {
+      int n = countNeighbors(r, c);
+      if (grid[r][c])
+        next_grid[r][c] = (n == 2 || n == 3) ? 1 : 0;
+      else
+        next_grid[r][c] = (n == 3) ? 1 : 0;
+    }
+  }
+  memcpy(grid, next_grid, sizeof(grid));
+  generation++;
+}
+
+void setup() {
+  matrix.begin();
+  randomize();
+}
+
+void loop() {
+  uint32_t frame[4];
+  gridToFrame(frame);
+  matrix.loadFrame(frame);
+  delay(200);
+  step();
+  // Re-randomize if stagnant (every 100 generations)
+  if (generation >= 100) {
+    randomize();
+  }
+}
+''',
+    "Bouncing Square": '''\
+// ADC noise-seeded bouncing 2x2 square
+#include "Arduino_LED_Matrix.h"
+
+Arduino_LED_Matrix matrix;
+
+int x, y;
+int dx, dy;
+
+uint32_t adcNoiseSeed() {
+  uint32_t seed = 0;
+  for (int i = 0; i < 32; i++) {
+    seed = (seed << 1) | (analogRead(A0) & 1);
+  }
+  return seed;
+}
+
+void gridToFrame(uint8_t grid[8][13], uint32_t* frame) {
+  frame[0] = frame[1] = frame[2] = frame[3] = 0;
+  for (int r = 0; r < 8; r++) {
+    for (int c = 0; c < 13; c++) {
+      int bit = r * 13 + c;
+      if (grid[r][c]) {
+        frame[bit / 32] |= (1UL << (31 - (bit % 32)));
+      }
+    }
+  }
+}
+
+void setup() {
+  matrix.begin();
+  randomSeed(adcNoiseSeed());
+
+  // Random starting position (within bounds for 2x2)
+  x = random(0, 12);  // 0..11 so x+1 <= 12
+  y = random(0, 7);   // 0..6 so y+1 <= 7
+
+  // Random velocity: -1 or +1 for each axis
+  dx = random(2) ? 1 : -1;
+  dy = random(2) ? 1 : -1;
+}
+
+void loop() {
+  uint8_t grid[8][13] = {0};
+
+  // Draw 2x2 square
+  grid[y][x] = 1;
+  grid[y][x+1] = 1;
+  grid[y+1][x] = 1;
+  grid[y+1][x+1] = 1;
+
+  uint32_t frame[4];
+  gridToFrame(grid, frame);
+  matrix.loadFrame(frame);
+
+  // Move
+  x += dx;
+  y += dy;
+
+  // Bounce off edges
+  if (x <= 0 || x >= 11) dx = -dx;
+  if (y <= 0 || y >= 6) dy = -dy;
+
+  // Clamp just in case
+  if (x < 0) x = 0;
+  if (x > 11) x = 11;
+  if (y < 0) y = 0;
+  if (y > 6) y = 6;
+
+  delay(80);
+}
+''',
+}
 PORT = "/dev/cu.usbmodem19087929472"
 FQBN = "arduino:zephyr:unoq"
 SKETCH_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "blink")
@@ -137,6 +651,53 @@ class LEDMatrixGUI:
                                font=("Helvetica", 11))
             btn.pack(side=tk.LEFT, padx=4)
 
+        # --- Presets ---
+        preset_frame = tk.Frame(root, bg="#111111")
+        preset_frame.pack(pady=(5, 5))
+
+        tk.Label(preset_frame, text="Shapes:", bg="#111111", fg="#888888",
+                 font=("Helvetica", 10)).pack(side=tk.LEFT, padx=(0, 4))
+        self.shape_var = tk.StringVar(value="Heart")
+        shape_menu = tk.OptionMenu(preset_frame, self.shape_var, *SHAPES.keys())
+        shape_menu.config(bg="#333333", fg="white", highlightthickness=0,
+                          activebackground="#444444", activeforeground="white",
+                          font=("Helvetica", 10), width=10)
+        shape_menu["menu"].config(bg="#333333", fg="white",
+                                   activebackground="#555555", activeforeground="white")
+        shape_menu.pack(side=tk.LEFT, padx=2)
+        CanvasButton(preset_frame, "Load", self.load_shape, bg="#444444", fg="white",
+                     width=50, height=28, font=("Helvetica", 10)).pack(side=tk.LEFT, padx=2)
+
+        tk.Label(preset_frame, text="  Animations:", bg="#111111", fg="#888888",
+                 font=("Helvetica", 10)).pack(side=tk.LEFT, padx=(8, 4))
+        self.anim_var = tk.StringVar(value="Heartbeat")
+        anim_menu = tk.OptionMenu(preset_frame, self.anim_var, *ANIMATIONS.keys())
+        anim_menu.config(bg="#333333", fg="white", highlightthickness=0,
+                         activebackground="#444444", activeforeground="white",
+                         font=("Helvetica", 10), width=10)
+        anim_menu["menu"].config(bg="#333333", fg="white",
+                                  activebackground="#555555", activeforeground="white")
+        anim_menu.pack(side=tk.LEFT, padx=2)
+        CanvasButton(preset_frame, "Load", self.load_animation, bg="#444444", fg="white",
+                     width=50, height=28, font=("Helvetica", 10)).pack(side=tk.LEFT, padx=2)
+
+        # --- Live Sketches ---
+        live_frame = tk.Frame(root, bg="#111111")
+        live_frame.pack(pady=(0, 5))
+
+        tk.Label(live_frame, text="Live (on-board):", bg="#111111", fg="#888888",
+                 font=("Helvetica", 10)).pack(side=tk.LEFT, padx=(0, 4))
+        self.live_var = tk.StringVar(value=list(LIVE_SKETCHES.keys())[0])
+        live_menu = tk.OptionMenu(live_frame, self.live_var, *LIVE_SKETCHES.keys())
+        live_menu.config(bg="#333333", fg="white", highlightthickness=0,
+                         activebackground="#444444", activeforeground="white",
+                         font=("Helvetica", 10), width=16)
+        live_menu["menu"].config(bg="#333333", fg="white",
+                                  activebackground="#555555", activeforeground="white")
+        live_menu.pack(side=tk.LEFT, padx=2)
+        CanvasButton(live_frame, "Upload", self.upload_live, bg="#664400", fg="white",
+                     width=60, height=28, font=("Helvetica", 10)).pack(side=tk.LEFT, padx=2)
+
         # --- Timeline ---
         tk.Label(root, text="FRAMES", bg="#111111", fg="#888888",
                  font=("Helvetica", 10, "bold")).pack(pady=(10, 2))
@@ -258,6 +819,57 @@ class LEDMatrixGUI:
             for c in range(COLS):
                 color = COLOR_ON if state[r][c] else COLOR_OFF
                 self.canvas.itemconfig(self.rects[r][c], fill=color)
+
+    def upload_live(self):
+        if self.uploading:
+            return
+        if self.previewing:
+            self.stop_preview()
+        name = self.live_var.get()
+        sketch_code = LIVE_SKETCHES[name]
+        self.uploading = True
+        self.upload_btn.config(bg="#666633", text="Uploading...")
+        self.status_var.set(f"Compiling live sketch: {name}...")
+
+        def do_upload():
+            try:
+                sketch_path = os.path.join(SKETCH_DIR, "blink.ino")
+                with open(sketch_path, "w") as f:
+                    f.write(sketch_code)
+                result = subprocess.run(
+                    ["arduino-cli", "compile", "--fqbn", FQBN, SKETCH_DIR],
+                    capture_output=True, text=True, timeout=120
+                )
+                if result.returncode != 0:
+                    self.root.after(0, lambda: self.upload_done(False, f"Compile error:\n{result.stderr}"))
+                    return
+                self.root.after(0, lambda: self.status_var.set("Uploading to board..."))
+                result = subprocess.run(
+                    ["arduino-cli", "upload", "-p", PORT, "--fqbn", FQBN, SKETCH_DIR],
+                    capture_output=True, text=True, timeout=60
+                )
+                if result.returncode != 0:
+                    self.root.after(0, lambda: self.upload_done(False, f"Upload error:\n{result.stderr}"))
+                    return
+                self.root.after(0, lambda: self.upload_done(True, f"Live sketch '{name}' uploaded!"))
+            except Exception as e:
+                self.root.after(0, lambda: self.upload_done(False, str(e)))
+
+        threading.Thread(target=do_upload, daemon=True).start()
+
+    def load_shape(self):
+        name = self.shape_var.get()
+        shape = SHAPES[name]
+        state = [[bool(cell) for cell in row] for row in shape]
+        self.frames[self.current_frame_idx] = (state, self.frames[self.current_frame_idx][1])
+        self.update_all_cells()
+        self.rebuild_timeline()
+
+    def load_animation(self):
+        name = self.anim_var.get()
+        self.frames = ANIMATIONS[name]()
+        self.current_frame_idx = 0
+        self.load_frame_to_canvas(0)
 
     def all_on(self):
         self.frames[self.current_frame_idx] = ([[True] * COLS for _ in range(ROWS)],
