@@ -40,6 +40,33 @@ RGB LEDs
 - **LED4**: Pins PH13–PH15 (mapped to pins 51–53)
 - PWM polarity is inverted (255 = off, 0 = full brightness)
 
+Bridge RPC
+----------
+
+The ``arduino-router`` daemon on the Linux side owns ``/dev/ttyHS1`` and
+multiplexes access to the MCU serial port. Scripts must communicate through
+the router's Unix socket (``/var/run/arduino-router.sock``), not the serial
+port directly.
+
+MCU sketches register methods with the router using the ``Arduino_RouterBridge``
+library:
+
+.. code-block:: cpp
+
+   #include <Arduino_RouterBridge.h>
+   Bridge.begin();
+   Bridge.provide("set_frame", set_frame);
+
+The ``rpc_receiver/`` sketch provides a generic ``set_frame`` method that
+accepts hex-encoded LED frames, making it reusable by any Linux-side script
+(``board/clock.py``, ``board/wifi_monitor.py``).
+
+.. note::
+
+   ``Arduino_RPClite`` is a lower-level library for direct serial communication.
+   It does **not** register methods with the router — use ``Arduino_RouterBridge``
+   for any Bridge RPC workflow.
+
 Bootloader Recovery
 -------------------
 

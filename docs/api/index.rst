@@ -9,3 +9,4 @@ Auto-generated documentation from Python source code.
    gui
    wifi_scan
    wifi_monitor
+   clock

@@ -44,6 +44,11 @@ These run natively on the STM32 and produce dynamic, non-repeating patterns:
 - **ADC Noise Life** — Conway's Game of Life seeded from ADC noise
 - **Bouncing Square** — A square that bounces around the matrix
 - **Bouncing Spinner** — A rotating line that bounces around the matrix
+- **Digital Clock** (4 orientations) — HH:MM display with blinking separator,
+  compiled with time from the host PC
+- **RPC Frame Receiver** — Registers a ``set_frame`` Bridge RPC method so
+  Linux-side scripts (``board/clock.py``, ``board/wifi_monitor.py``) can push
+  frames to the matrix
 
 Use the **Live** dropdown and click **Upload** to compile and flash.
 
