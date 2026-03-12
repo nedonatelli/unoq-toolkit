@@ -633,11 +633,413 @@ void loop() {
   delay(100);
 }
 ''',
+    "Perlin Flow": '''\
+// Smooth organic patterns using integer Perlin-like noise
+#include "Arduino_LED_Matrix.h"
+
+Arduino_LED_Matrix matrix;
+
+uint32_t adcNoiseSeed() {
+  uint32_t seed = 0;
+  for (int i = 0; i < 32; i++) {
+    seed = (seed << 1) | (analogRead(A0) & 1);
+  }
+  return seed;
+}
+
+// Simple hash-based noise (integer-only, no floats needed)
+uint8_t hash8(int x, int y, int seed) {
+  int h = x * 374761393 + y * 668265263 + seed * 1274126177;
+  h = (h ^ (h >> 13)) * 1103515245;
+  return (uint8_t)(h >> 24);
+}
+
+// Smooth noise via bilinear interpolation (fixed-point)
+uint8_t smoothNoise(int x, int y, int seed, int scale) {
+  int gx = x / scale;
+  int gy = y / scale;
+  int fx = ((x % scale) * 255) / scale;
+  int fy = ((y % scale) * 255) / scale;
+
+  uint8_t c00 = hash8(gx, gy, seed);
+  uint8_t c10 = hash8(gx + 1, gy, seed);
+  uint8_t c01 = hash8(gx, gy + 1, seed);
+  uint8_t c11 = hash8(gx + 1, gy + 1, seed);
+
+  int top = c00 + ((c10 - c00) * fx) / 255;
+  int bot = c01 + ((c11 - c01) * fx) / 255;
+  return top + ((bot - top) * fy) / 255;
+}
+
+int t = 0;
+
+void setup() {
+  matrix.begin();
+  randomSeed(adcNoiseSeed());
+  t = random(10000);
+}
+
+void loop() {
+  uint32_t frame[4] = {0, 0, 0, 0};
+  for (int r = 0; r < 8; r++) {
+    for (int c = 0; c < 13; c++) {
+      uint8_t v = smoothNoise(c + t, r + t / 2, t / 3, 4);
+      if (v > 128) {
+        int bit = r * 13 + c;
+        frame[bit / 32] |= (1UL << (31 - (bit % 32)));
+      }
+    }
+  }
+  matrix.loadFrame(frame);
+  t++;
+  delay(80);
+}
+''',
+    "Starfield": '''\
+// Expanding starfield effect (warp speed)
+#include "Arduino_LED_Matrix.h"
+
+Arduino_LED_Matrix matrix;
+
+#define MAX_STARS 20
+
+// Star positions in fixed-point (x256 for sub-pixel precision)
+// Origin is center of display (6.0, 3.5)
+int starX[MAX_STARS];
+int starY[MAX_STARS];
+int starVX[MAX_STARS];
+int starVY[MAX_STARS];
+
+uint32_t adcNoiseSeed() {
+  uint32_t seed = 0;
+  for (int i = 0; i < 32; i++) {
+    seed = (seed << 1) | (analogRead(A0) & 1);
+  }
+  return seed;
+}
+
+void spawnStar(int i) {
+  // Start near center with small random offset
+  starX[i] = 6 * 256 + random(-64, 64);
+  starY[i] = 4 * 256 + random(-64, 64);
+  // Random outward velocity
+  int angle = random(0, 8);
+  const int vx8[] = {3, 2, 0, -2, -3, -2, 0, 2};
+  const int vy8[] = {0, 2, 3, 2, 0, -2, -3, -2};
+  starVX[i] = vx8[angle] + random(-1, 2);
+  starVY[i] = vy8[angle] + random(-1, 2);
+  if (starVX[i] == 0 && starVY[i] == 0) starVX[i] = 1;
+}
+
+void setup() {
+  matrix.begin();
+  randomSeed(adcNoiseSeed());
+  for (int i = 0; i < MAX_STARS; i++) {
+    spawnStar(i);
+    // Spread initial stars outward so they don't all start at center
+    for (int t = 0; t < random(5, 30); t++) {
+      starX[i] += starVX[i];
+      starY[i] += starVY[i];
+    }
+  }
+}
+
+void loop() {
+  uint32_t frame[4] = {0, 0, 0, 0};
+
+  for (int i = 0; i < MAX_STARS; i++) {
+    // Accelerate outward
+    starVX[i] = starVX[i] * 105 / 100;
+    starVY[i] = starVY[i] * 105 / 100;
+
+    starX[i] += starVX[i];
+    starY[i] += starVY[i];
+
+    int px = starX[i] / 256;
+    int py = starY[i] / 256;
+
+    if (px < 0 || px >= 13 || py < 0 || py >= 8) {
+      spawnStar(i);
+    } else {
+      int bit = py * 13 + px;
+      frame[bit / 32] |= (1UL << (31 - (bit % 32)));
+    }
+  }
+
+  matrix.loadFrame(frame);
+  delay(60);
+}
+''',
+    "Matrix Rain": '''\
+// Falling columns of dots at random speeds
+#include "Arduino_LED_Matrix.h"
+
+Arduino_LED_Matrix matrix;
+
+int dropY[13];      // Current head position for each column
+int dropLen[13];    // Tail length
+int dropSpeed[13];  // Ticks between moves (lower = faster)
+int dropTick[13];   // Current tick counter
+bool active[13];    // Whether column has an active drop
+
+uint32_t adcNoiseSeed() {
+  uint32_t seed = 0;
+  for (int i = 0; i < 32; i++) {
+    seed = (seed << 1) | (analogRead(A0) & 1);
+  }
+  return seed;
+}
+
+void spawnDrop(int col) {
+  dropY[col] = -1;
+  dropLen[col] = random(2, 6);
+  dropSpeed[col] = random(1, 4);
+  dropTick[col] = 0;
+  active[col] = true;
+}
+
+void setup() {
+  matrix.begin();
+  randomSeed(adcNoiseSeed());
+  for (int c = 0; c < 13; c++) {
+    active[c] = false;
+    // Stagger initial drops
+    if (random(3) == 0) spawnDrop(c);
+  }
+}
+
+void loop() {
+  uint32_t frame[4] = {0, 0, 0, 0};
+
+  for (int c = 0; c < 13; c++) {
+    if (!active[c]) {
+      if (random(8) == 0) spawnDrop(c);
+      continue;
+    }
+
+    dropTick[c]++;
+    if (dropTick[c] >= dropSpeed[c]) {
+      dropTick[c] = 0;
+      dropY[c]++;
+    }
+
+    // Draw the drop and its tail
+    for (int t = 0; t < dropLen[c]; t++) {
+      int r = dropY[c] - t;
+      if (r >= 0 && r < 8) {
+        int bit = r * 13 + c;
+        frame[bit / 32] |= (1UL << (31 - (bit % 32)));
+      }
+    }
+
+    // Check if entire tail has left the screen
+    if (dropY[c] - dropLen[c] >= 8) {
+      active[c] = false;
+    }
+  }
+
+  matrix.loadFrame(frame);
+  delay(50);
+}
+''',
+    "Lissajous": '''\
+// Animated Lissajous curves with shifting parameters
+#include "Arduino_LED_Matrix.h"
+
+Arduino_LED_Matrix matrix;
+
+uint32_t adcNoiseSeed() {
+  uint32_t seed = 0;
+  for (int i = 0; i < 32; i++) {
+    seed = (seed << 1) | (analogRead(A0) & 1);
+  }
+  return seed;
+}
+
+// Fixed-point sine table (256 entries, amplitude 127)
+const int8_t sinTab[256] = {
+  0,3,6,9,12,16,19,22,25,28,31,34,37,40,43,46,
+  49,51,54,57,60,63,65,68,71,73,76,78,81,83,85,88,
+  90,92,94,96,98,100,102,104,106,107,109,111,112,113,115,116,
+  117,118,120,121,122,122,123,124,125,125,126,126,126,127,127,127,
+  127,127,127,127,126,126,126,125,125,124,123,122,122,121,120,118,
+  117,116,115,113,112,111,109,107,106,104,102,100,98,96,94,92,
+  90,88,85,83,81,78,76,73,71,68,65,63,60,57,54,51,
+  49,46,43,40,37,34,31,28,25,22,19,16,12,9,6,3,
+  0,-3,-6,-9,-12,-16,-19,-22,-25,-28,-31,-34,-37,-40,-43,-46,
+  -49,-51,-54,-57,-60,-63,-65,-68,-71,-73,-76,-78,-81,-83,-85,-88,
+  -90,-92,-94,-96,-98,-100,-102,-104,-106,-107,-109,-111,-112,-113,-115,-116,
+  -117,-118,-120,-121,-122,-122,-123,-124,-125,-125,-126,-126,-126,-127,-127,-127,
+  -127,-127,-127,-127,-126,-126,-126,-125,-125,-124,-123,-122,-122,-121,-120,-118,
+  -117,-116,-115,-113,-112,-111,-109,-107,-106,-104,-102,-100,-98,-96,-94,-92,
+  -90,-88,-85,-83,-81,-78,-76,-73,-71,-68,-65,-63,-60,-57,-54,-51,
+  -49,-46,-43,-40,-37,-34,-31,-28,-25,-22,-19,-16,-12,-9,-6,-3
+};
+
+int8_t fsin(uint8_t angle) { return sinTab[angle]; }
+int8_t fcos(uint8_t angle) { return sinTab[(angle + 64) & 255]; }
+
+int t = 0;
+int freqA, freqB;
+int phaseShift;
+int modeTimer = 0;
+
+void newMode() {
+  freqA = random(1, 5);
+  freqB = random(1, 5);
+  while (freqB == freqA) freqB = random(1, 5);
+  phaseShift = random(0, 256);
+  modeTimer = 0;
+}
+
+void setup() {
+  matrix.begin();
+  randomSeed(adcNoiseSeed());
+  t = random(10000);
+  newMode();
+}
+
+void loop() {
+  uint32_t frame[4] = {0, 0, 0, 0};
+
+  // Draw the curve by sampling many points along the parameter
+  for (int i = 0; i < 80; i++) {
+    uint8_t angle = (uint8_t)(i * 256 / 80);
+    int sx = fsin((uint8_t)(angle * freqA + t));
+    int sy = fcos((uint8_t)(angle * freqB + t / 2 + phaseShift));
+
+    int px = 6 + (sx * 6) / 127;
+    int py = 4 + (sy * 3) / 127;
+
+    if (px >= 0 && px < 13 && py >= 0 && py < 8) {
+      int bit = py * 13 + px;
+      frame[bit / 32] |= (1UL << (31 - (bit % 32)));
+    }
+  }
+
+  matrix.loadFrame(frame);
+  t++;
+  modeTimer++;
+  if (modeTimer > 300) newMode();
+  delay(40);
+}
+''',
+    "Binary Clock": '''\
+// Binary clock display (HH:MM:SS in binary columns)
+// Accepts time sync via Bridge RPC: set_time(h, m, s)
+#include "Arduino_LED_Matrix.h"
+#include "RPC.h"
+
+Arduino_LED_Matrix matrix;
+
+uint32_t adcNoiseSeed() {
+  uint32_t seed = 0;
+  for (int i = 0; i < 32; i++) {
+    seed = (seed << 1) | (analogRead(A0) & 1);
+  }
+  return seed;
+}
+
+void gridToFrame(uint8_t grid[8][13], uint32_t* frame) {
+  frame[0] = frame[1] = frame[2] = frame[3] = 0;
+  for (int r = 0; r < 8; r++) {
+    for (int c = 0; c < 13; c++) {
+      int bit = r * 13 + c;
+      if (grid[r][c]) {
+        frame[bit / 32] |= (1UL << (31 - (bit % 32)));
+      }
+    }
+  }
+}
+
+volatile unsigned long startMillis;
+volatile int startH, startM, startS;
+volatile bool timeSynced = false;
+
+int set_time(int h, int m, int s) {
+  startH = h;
+  startM = m;
+  startS = s;
+  startMillis = millis();
+  timeSynced = true;
+  return 1;
+}
+
+void setup() {
+  matrix.begin();
+  RPC.begin();
+  RPC.bind("set_time", set_time);
+  randomSeed(adcNoiseSeed());
+  startH = 0;
+  startM = 0;
+  startS = 0;
+  startMillis = millis();
+}
+
+void drawDigit(uint8_t grid[8][13], int col, int val, int bits) {
+  for (int b = 0; b < bits; b++) {
+    if (val & (1 << b)) {
+      grid[7 - b][col] = 1;
+    }
+  }
+}
+
+void loop() {
+  unsigned long elapsed = (millis() - startMillis) / 1000;
+  int totalSecs = (startH * 3600 + startM * 60 + startS + (int)elapsed) % 86400;
+  int h = totalSecs / 3600;
+  int m = (totalSecs % 3600) / 60;
+  int s = totalSecs % 60;
+
+  int h10 = h / 10, h1 = h % 10;
+  int m10 = m / 10, m1 = m % 10;
+  int s10 = s / 10, s1 = s % 10;
+
+  uint8_t grid[8][13] = {0};
+
+  // Layout: H10 H1 . M10 M1 . S10 S1
+  // Cols:    1   3  4  5   7  8  9  11
+  drawDigit(grid, 1, h10, 2);   // 0-2
+  drawDigit(grid, 3, h1, 4);    // 0-9
+  drawDigit(grid, 5, m10, 3);   // 0-5
+  drawDigit(grid, 7, m1, 4);    // 0-9
+  drawDigit(grid, 9, s10, 3);   // 0-5
+  drawDigit(grid, 11, s1, 4);   // 0-9
+
+  // Separator dots (blink every second)
+  if (s % 2 == 0) {
+    grid[3][4] = 1;
+    grid[5][4] = 1;
+    grid[3][8] = 1;
+    grid[5][8] = 1;
+  }
+
+  // Row 0: labels (static dots at top of each digit column)
+  grid[0][1] = 1;
+  grid[0][3] = 1;
+  grid[0][5] = 1;
+  grid[0][7] = 1;
+  grid[0][9] = 1;
+  grid[0][11] = 1;
+
+  // If not yet synced, flash top-right corner as indicator
+  if (!timeSynced) {
+    grid[0][12] = (s % 2 == 0) ? 1 : 0;
+  }
+
+  uint32_t frame[4];
+  gridToFrame(grid, frame);
+  matrix.loadFrame(frame);
+  delay(250);
+}
+''',
 }
 # --- Board connection settings ---
 PORT = "/dev/cu.usbmodem19087929472"  # USB serial port (programming only, not CDC)
 FQBN = "arduino:zephyr:unoq"          # Fully Qualified Board Name for arduino-cli
 SKETCH_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "blink")  # Scratch dir for .ino
+ADB = os.path.join(os.path.expanduser("~"), "Library/Arduino15/packages/arduino/tools/adb/32.0.0/adb")
+BOARD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "board")  # On-board scripts
 
 # --- GUI colors ---
 COLOR_ON = "#00ff44"   # Active LED color (green)
@@ -961,12 +1363,32 @@ class LEDMatrixGUI:
                 color = COLOR_ON if state[r][c] else COLOR_OFF
                 self.canvas.itemconfig(self.rects[r][c], fill=color)
 
+    def sync_time_via_rpc(self):
+        """Push and run time_sync.py on the board's Linux side via ADB."""
+        sync_script = os.path.join(BOARD_DIR, "time_sync.py")
+        remote_path = "/tmp/time_sync.py"
+        # Push script to board
+        result = subprocess.run(
+            [ADB, "push", sync_script, remote_path],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode != 0:
+            return False, f"ADB push failed:\n{result.stderr}"
+        # Run it
+        result = subprocess.run(
+            [ADB, "shell", f"python3 {remote_path}"],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode != 0:
+            return False, f"Time sync failed:\n{result.stderr}"
+        return True, result.stdout.strip()
+
     def upload_live(self):
         """Compile and upload a live sketch (.ino) directly to the board.
 
         Writes the selected sketch code to blink/blink.ino, compiles with
         arduino-cli, and uploads. Runs in a background thread to keep the GUI
-        responsive.
+        responsive. For the Binary Clock sketch, also syncs time via Bridge RPC.
         """
         if self.uploading:
             return
@@ -998,7 +1420,21 @@ class LEDMatrixGUI:
                 if result.returncode != 0:
                     self.root.after(0, lambda: self.upload_done(False, f"Upload error:\n{result.stderr}"))
                     return
-                self.root.after(0, lambda: self.upload_done(True, f"Live sketch '{name}' uploaded!"))
+
+                # For Binary Clock, sync time via Bridge RPC
+                if name == "Binary Clock":
+                    self.root.after(0, lambda: self.status_var.set("Syncing time via Bridge RPC..."))
+                    import time as _time
+                    _time.sleep(3)  # Wait for sketch to boot and register RPC
+                    ok, msg = self.sync_time_via_rpc()
+                    if ok:
+                        self.root.after(0, lambda: self.upload_done(
+                            True, f"Binary Clock uploaded & time synced! {msg}"))
+                    else:
+                        self.root.after(0, lambda: self.upload_done(True,
+                            f"Binary Clock uploaded but time sync failed: {msg}"))
+                else:
+                    self.root.after(0, lambda: self.upload_done(True, f"Live sketch '{name}' uploaded!"))
             except Exception as e:
                 err = str(e)
                 self.root.after(0, lambda: self.upload_done(False, err))
