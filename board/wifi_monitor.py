@@ -110,7 +110,7 @@ class SimpleBridge:
         # Start reader thread
         self.reader = threading.Thread(target=self._read_loop, daemon=True)
         self.reader.start()
-        print(f"Connected to router")
+        print("Connected to router")
 
     def call(self, method, *params, timeout=5):
         msgid = self._next_id()

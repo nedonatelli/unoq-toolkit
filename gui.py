@@ -1000,7 +1000,8 @@ class LEDMatrixGUI:
                     return
                 self.root.after(0, lambda: self.upload_done(True, f"Live sketch '{name}' uploaded!"))
             except Exception as e:
-                self.root.after(0, lambda: self.upload_done(False, str(e)))
+                err = str(e)
+                self.root.after(0, lambda: self.upload_done(False, err))
 
         threading.Thread(target=do_upload, daemon=True).start()
 
@@ -1291,7 +1292,8 @@ void loop() {{
                 self.root.after(0, lambda: self.upload_done(True,
                     f"{'Animation' if n > 1 else 'Pattern'} uploaded! ({n} frame{'s' if n > 1 else ''})"))
             except Exception as e:
-                self.root.after(0, lambda: self.upload_done(False, str(e)))
+                err = str(e)
+                self.root.after(0, lambda: self.upload_done(False, err))
 
         threading.Thread(target=do_upload, daemon=True).start()
 

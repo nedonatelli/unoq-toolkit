@@ -2,7 +2,6 @@
 """WiFi scanner that displays signal strength on Arduino UNO Q LED matrix"""
 
 import subprocess
-import re
 import time
 import os
 
@@ -140,7 +139,7 @@ def main():
 
             generate_and_upload(networks)
 
-            print(f"\nRefreshing in 30 seconds... (Ctrl+C to stop)\n")
+            print("\nRefreshing in 30 seconds... (Ctrl+C to stop)\n")
             time.sleep(30)
 
         except KeyboardInterrupt:

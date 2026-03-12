@@ -1,0 +1,12 @@
+line-length = 120
+
+[lint]
+select = ["E", "F", "W"]
+ignore = [
+    "E701",  # multiple statements on one line (colon) - used in compact msgpack impl
+    "E702",  # multiple statements on one line (semicolon)
+    "E741",  # ambiguous variable name
+]
+
+[lint.per-file-ignores]
+"docs/conf.py" = ["E402"]  # module-level import not at top of file
