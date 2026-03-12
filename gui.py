@@ -1012,6 +1012,266 @@ void loop() {
   delay(250);
 }
 ''',
+    "Digital Clock (Flip)": '''\
+// Digital clock HH:MM — board rotated 180 degrees (upside-down landscape)
+// Time is set from __TIME__ at compile time
+#include "Arduino_LED_Matrix.h"
+
+Arduino_LED_Matrix matrix;
+
+const uint8_t font[10][5] = {
+  {0b111, 0b101, 0b101, 0b101, 0b111},  // 0
+  {0b010, 0b110, 0b010, 0b010, 0b111},  // 1
+  {0b111, 0b001, 0b111, 0b100, 0b111},  // 2
+  {0b111, 0b001, 0b111, 0b001, 0b111},  // 3
+  {0b101, 0b101, 0b111, 0b001, 0b001},  // 4
+  {0b111, 0b100, 0b111, 0b001, 0b111},  // 5
+  {0b111, 0b100, 0b111, 0b101, 0b111},  // 6
+  {0b111, 0b001, 0b010, 0b010, 0b010},  // 7
+  {0b111, 0b101, 0b111, 0b101, 0b111},  // 8
+  {0b111, 0b101, 0b111, 0b001, 0b111},  // 9
+};
+
+unsigned long startMillis;
+int startH, startM, startS;
+
+int parseDigits(const char* s, int pos) {
+  return (s[pos] - '0') * 10 + (s[pos + 1] - '0');
+}
+
+void drawDigit(uint8_t grid[8][13], int col, int row, int digit) {
+  for (int r = 0; r < 5; r++) {
+    for (int c = 0; c < 3; c++) {
+      if (font[digit][r] & (1 << (2 - c))) {
+        grid[row + r][col + c] = 1;
+      }
+    }
+  }
+}
+
+// 180-degree rotation: hardware(r, c) = grid(7-r, 12-c)
+void gridToFrame(uint8_t grid[8][13], uint32_t* frame) {
+  frame[0] = frame[1] = frame[2] = frame[3] = 0;
+  for (int r = 0; r < 8; r++) {
+    for (int c = 0; c < 13; c++) {
+      if (grid[7 - r][12 - c]) {
+        int bit = r * 13 + c;
+        frame[bit / 32] |= (1UL << (31 - (bit % 32)));
+      }
+    }
+  }
+}
+
+void setup() {
+  matrix.begin();
+  startH = parseDigits(__TIME__, 0);
+  startM = parseDigits(__TIME__, 3);
+  startS = parseDigits(__TIME__, 6);
+  startMillis = millis();
+}
+
+void loop() {
+  unsigned long elapsed = (millis() - startMillis) / 1000;
+  int totalSecs = (startH * 3600 + startM * 60 + startS + (int)elapsed) % 86400;
+  int h = totalSecs / 3600;
+  int m = (totalSecs % 3600) / 60;
+  int s = totalSecs % 60;
+
+  uint8_t grid[8][13] = {0};
+
+  int top = 1;
+  drawDigit(grid, 0,  top, h / 10);
+  drawDigit(grid, 3,  top, h % 10);
+  drawDigit(grid, 7,  top, m / 10);
+  drawDigit(grid, 10, top, m % 10);
+
+  if (s % 2 == 0) {
+    grid[top + 1][6] = 1;
+    grid[top + 3][6] = 1;
+  }
+
+  uint32_t frame[4];
+  gridToFrame(grid, frame);
+  matrix.loadFrame(frame);
+  delay(250);
+}
+''',
+    "Digital Clock (Portrait)": '''\
+// Digital clock HH:MM — board rotated 90 degrees (portrait, 8 wide x 13 tall)
+// 3x5 pixel font, drawn into virtual 13x8 grid then rotated to hardware frame
+// Time is set from __TIME__ at compile time
+#include "Arduino_LED_Matrix.h"
+
+Arduino_LED_Matrix matrix;
+
+const uint8_t font[10][5] = {
+  {0b111, 0b101, 0b101, 0b101, 0b111},  // 0
+  {0b010, 0b110, 0b010, 0b010, 0b111},  // 1
+  {0b111, 0b001, 0b111, 0b100, 0b111},  // 2
+  {0b111, 0b001, 0b111, 0b001, 0b111},  // 3
+  {0b101, 0b101, 0b111, 0b001, 0b001},  // 4
+  {0b111, 0b100, 0b111, 0b001, 0b111},  // 5
+  {0b111, 0b100, 0b111, 0b101, 0b111},  // 6
+  {0b111, 0b001, 0b010, 0b010, 0b010},  // 7
+  {0b111, 0b101, 0b111, 0b101, 0b111},  // 8
+  {0b111, 0b101, 0b111, 0b001, 0b111},  // 9
+};
+
+unsigned long startMillis;
+int startH, startM, startS;
+
+int parseDigits(const char* s, int pos) {
+  return (s[pos] - '0') * 10 + (s[pos + 1] - '0');
+}
+
+// Draw a 3x5 digit into virtual portrait grid (13 rows x 8 cols)
+void drawDigit(uint8_t vgrid[13][8], int col, int row, int digit) {
+  for (int r = 0; r < 5; r++) {
+    for (int c = 0; c < 3; c++) {
+      if (font[digit][r] & (1 << (2 - c))) {
+        vgrid[row + r][col + c] = 1;
+      }
+    }
+  }
+}
+
+// Rotate virtual portrait grid (13 rows x 8 cols) to hardware frame (8 rows x 13 cols)
+// 90 degrees clockwise: hardware(r, c) = virtual(12 - c, r)
+void virtualToFrame(uint8_t vgrid[13][8], uint32_t* frame) {
+  frame[0] = frame[1] = frame[2] = frame[3] = 0;
+  for (int r = 0; r < 8; r++) {
+    for (int c = 0; c < 13; c++) {
+      if (vgrid[12 - c][r]) {
+        int bit = r * 13 + c;
+        frame[bit / 32] |= (1UL << (31 - (bit % 32)));
+      }
+    }
+  }
+}
+
+void setup() {
+  matrix.begin();
+  startH = parseDigits(__TIME__, 0);
+  startM = parseDigits(__TIME__, 3);
+  startS = parseDigits(__TIME__, 6);
+  startMillis = millis();
+}
+
+void loop() {
+  unsigned long elapsed = (millis() - startMillis) / 1000;
+  int totalSecs = (startH * 3600 + startM * 60 + startS + (int)elapsed) % 86400;
+  int h = totalSecs / 3600;
+  int m = (totalSecs % 3600) / 60;
+  int s = totalSecs % 60;
+
+  // Virtual portrait grid: 13 rows x 8 cols
+  uint8_t vgrid[13][8] = {0};
+
+  // Layout (portrait, top to bottom):
+  // Row 1-5:  HH — digits at cols (1,5) with 1-col gap
+  // Row 6:    separator (blinking dots)
+  // Row 7-11: MM — digits at cols (1,5) with 1-col gap
+  drawDigit(vgrid, 1, 1, h / 10);
+  drawDigit(vgrid, 5, 1, h % 10);
+  drawDigit(vgrid, 1, 7, m / 10);
+  drawDigit(vgrid, 5, 7, m % 10);
+
+  // Blinking separator dots between HH and MM
+  if (s % 2 == 0) {
+    vgrid[6][2] = 1;
+    vgrid[6][5] = 1;
+  }
+
+  uint32_t frame[4];
+  virtualToFrame(vgrid, frame);
+  matrix.loadFrame(frame);
+  delay(250);
+}
+''',
+    "Digital Clock (Portrait Flip)": '''\
+// Digital clock HH:MM — board rotated 90 degrees opposite direction
+// Same as Portrait but rotated 180 degrees (counter-clockwise rotation)
+// Time is set from __TIME__ at compile time
+#include "Arduino_LED_Matrix.h"
+
+Arduino_LED_Matrix matrix;
+
+const uint8_t font[10][5] = {
+  {0b111, 0b101, 0b101, 0b101, 0b111},  // 0
+  {0b010, 0b110, 0b010, 0b010, 0b111},  // 1
+  {0b111, 0b001, 0b111, 0b100, 0b111},  // 2
+  {0b111, 0b001, 0b111, 0b001, 0b111},  // 3
+  {0b101, 0b101, 0b111, 0b001, 0b001},  // 4
+  {0b111, 0b100, 0b111, 0b001, 0b111},  // 5
+  {0b111, 0b100, 0b111, 0b101, 0b111},  // 6
+  {0b111, 0b001, 0b010, 0b010, 0b010},  // 7
+  {0b111, 0b101, 0b111, 0b101, 0b111},  // 8
+  {0b111, 0b101, 0b111, 0b001, 0b111},  // 9
+};
+
+unsigned long startMillis;
+int startH, startM, startS;
+
+int parseDigits(const char* s, int pos) {
+  return (s[pos] - '0') * 10 + (s[pos + 1] - '0');
+}
+
+void drawDigit(uint8_t vgrid[13][8], int col, int row, int digit) {
+  for (int r = 0; r < 5; r++) {
+    for (int c = 0; c < 3; c++) {
+      if (font[digit][r] & (1 << (2 - c))) {
+        vgrid[row + r][col + c] = 1;
+      }
+    }
+  }
+}
+
+// 90 degrees counter-clockwise: hardware(r, c) = virtual(c, 7 - r)
+void virtualToFrame(uint8_t vgrid[13][8], uint32_t* frame) {
+  frame[0] = frame[1] = frame[2] = frame[3] = 0;
+  for (int r = 0; r < 8; r++) {
+    for (int c = 0; c < 13; c++) {
+      if (vgrid[c][7 - r]) {
+        int bit = r * 13 + c;
+        frame[bit / 32] |= (1UL << (31 - (bit % 32)));
+      }
+    }
+  }
+}
+
+void setup() {
+  matrix.begin();
+  startH = parseDigits(__TIME__, 0);
+  startM = parseDigits(__TIME__, 3);
+  startS = parseDigits(__TIME__, 6);
+  startMillis = millis();
+}
+
+void loop() {
+  unsigned long elapsed = (millis() - startMillis) / 1000;
+  int totalSecs = (startH * 3600 + startM * 60 + startS + (int)elapsed) % 86400;
+  int h = totalSecs / 3600;
+  int m = (totalSecs % 3600) / 60;
+  int s = totalSecs % 60;
+
+  uint8_t vgrid[13][8] = {0};
+
+  drawDigit(vgrid, 1, 1, h / 10);
+  drawDigit(vgrid, 5, 1, h % 10);
+  drawDigit(vgrid, 1, 7, m / 10);
+  drawDigit(vgrid, 5, 7, m % 10);
+
+  if (s % 2 == 0) {
+    vgrid[6][2] = 1;
+    vgrid[6][5] = 1;
+  }
+
+  uint32_t frame[4];
+  virtualToFrame(vgrid, frame);
+  matrix.loadFrame(frame);
+  delay(250);
+}
+''',
 }
 # --- Board connection settings ---
 PORT = "/dev/cu.usbmodem19087929472"  # USB serial port (programming only, not CDC)
