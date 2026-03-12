@@ -924,21 +924,27 @@ void loop() {
   delay(40);
 }
 ''',
-    "Binary Clock": '''\
-// Binary clock display (HH:MM:SS in binary columns)
-// Accepts time sync via Bridge RPC: set_time(h, m, s)
+    "Digital Clock": '''\
+// Digital clock HH:MM with 3x5 pixel font
+// Time is set from __TIME__ at compile time
 #include "Arduino_LED_Matrix.h"
-#include "RPC.h"
 
 Arduino_LED_Matrix matrix;
 
-uint32_t adcNoiseSeed() {
-  uint32_t seed = 0;
-  for (int i = 0; i < 32; i++) {
-    seed = (seed << 1) | (analogRead(A0) & 1);
-  }
-  return seed;
-}
+// 3x5 pixel font for digits 0-9 (each digit = 5 rows of 3 bits)
+// Stored as 5 bytes per digit, each byte has low 3 bits = pixel columns
+const uint8_t font[10][5] = {
+  {0b111, 0b101, 0b101, 0b101, 0b111},  // 0
+  {0b010, 0b110, 0b010, 0b010, 0b111},  // 1
+  {0b111, 0b001, 0b111, 0b100, 0b111},  // 2
+  {0b111, 0b001, 0b111, 0b001, 0b111},  // 3
+  {0b101, 0b101, 0b111, 0b001, 0b001},  // 4
+  {0b111, 0b100, 0b111, 0b001, 0b111},  // 5
+  {0b111, 0b100, 0b111, 0b101, 0b111},  // 6
+  {0b111, 0b001, 0b010, 0b010, 0b010},  // 7
+  {0b111, 0b101, 0b111, 0b101, 0b111},  // 8
+  {0b111, 0b101, 0b111, 0b001, 0b111},  // 9
+};
 
 void gridToFrame(uint8_t grid[8][13], uint32_t* frame) {
   frame[0] = frame[1] = frame[2] = frame[3] = 0;
@@ -952,36 +958,29 @@ void gridToFrame(uint8_t grid[8][13], uint32_t* frame) {
   }
 }
 
-volatile unsigned long startMillis;
-volatile int startH, startM, startS;
-volatile bool timeSynced = false;
+unsigned long startMillis;
+int startH, startM, startS;
 
-int set_time(int h, int m, int s) {
-  startH = h;
-  startM = m;
-  startS = s;
-  startMillis = millis();
-  timeSynced = true;
-  return 1;
+int parseDigits(const char* s, int pos) {
+  return (s[pos] - '0') * 10 + (s[pos + 1] - '0');
+}
+
+void drawDigit(uint8_t grid[8][13], int col, int row, int digit) {
+  for (int r = 0; r < 5; r++) {
+    for (int c = 0; c < 3; c++) {
+      if (font[digit][r] & (1 << (2 - c))) {
+        grid[row + r][col + c] = 1;
+      }
+    }
+  }
 }
 
 void setup() {
   matrix.begin();
-  RPC.begin();
-  RPC.bind("set_time", set_time);
-  randomSeed(adcNoiseSeed());
-  startH = 0;
-  startM = 0;
-  startS = 0;
+  startH = parseDigits(__TIME__, 0);
+  startM = parseDigits(__TIME__, 3);
+  startS = parseDigits(__TIME__, 6);
   startMillis = millis();
-}
-
-void drawDigit(uint8_t grid[8][13], int col, int val, int bits) {
-  for (int b = 0; b < bits; b++) {
-    if (val & (1 << b)) {
-      grid[7 - b][col] = 1;
-    }
-  }
 }
 
 void loop() {
@@ -991,40 +990,20 @@ void loop() {
   int m = (totalSecs % 3600) / 60;
   int s = totalSecs % 60;
 
-  int h10 = h / 10, h1 = h % 10;
-  int m10 = m / 10, m1 = m % 10;
-  int s10 = s / 10, s1 = s % 10;
-
   uint8_t grid[8][13] = {0};
 
-  // Layout: H10 H1 . M10 M1 . S10 S1
-  // Cols:    1   3  4  5   7  8  9  11
-  drawDigit(grid, 1, h10, 2);   // 0-2
-  drawDigit(grid, 3, h1, 4);    // 0-9
-  drawDigit(grid, 5, m10, 3);   // 0-5
-  drawDigit(grid, 7, m1, 4);    // 0-9
-  drawDigit(grid, 9, s10, 3);   // 0-5
-  drawDigit(grid, 11, s1, 4);   // 0-9
+  // Layout: H10 H1 : M10 M1
+  // Cols:    0   3  6  7  10
+  int top = 1;  // Vertically center 5-tall digits in 8 rows
+  drawDigit(grid, 0,  top, h / 10);
+  drawDigit(grid, 3,  top, h % 10);
+  drawDigit(grid, 7,  top, m / 10);
+  drawDigit(grid, 10, top, m % 10);
 
-  // Separator dots (blink every second)
+  // Blinking colon separator (col 6, rows 2 and 4)
   if (s % 2 == 0) {
-    grid[3][4] = 1;
-    grid[5][4] = 1;
-    grid[3][8] = 1;
-    grid[5][8] = 1;
-  }
-
-  // Row 0: labels (static dots at top of each digit column)
-  grid[0][1] = 1;
-  grid[0][3] = 1;
-  grid[0][5] = 1;
-  grid[0][7] = 1;
-  grid[0][9] = 1;
-  grid[0][11] = 1;
-
-  // If not yet synced, flash top-right corner as indicator
-  if (!timeSynced) {
-    grid[0][12] = (s % 2 == 0) ? 1 : 0;
+    grid[top + 1][6] = 1;
+    grid[top + 3][6] = 1;
   }
 
   uint32_t frame[4];
@@ -1038,8 +1017,6 @@ void loop() {
 PORT = "/dev/cu.usbmodem19087929472"  # USB serial port (programming only, not CDC)
 FQBN = "arduino:zephyr:unoq"          # Fully Qualified Board Name for arduino-cli
 SKETCH_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "blink")  # Scratch dir for .ino
-ADB = os.path.join(os.path.expanduser("~"), "Library/Arduino15/packages/arduino/tools/adb/32.0.0/adb")
-BOARD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "board")  # On-board scripts
 
 # --- GUI colors ---
 COLOR_ON = "#00ff44"   # Active LED color (green)
@@ -1363,32 +1340,12 @@ class LEDMatrixGUI:
                 color = COLOR_ON if state[r][c] else COLOR_OFF
                 self.canvas.itemconfig(self.rects[r][c], fill=color)
 
-    def sync_time_via_rpc(self):
-        """Push and run time_sync.py on the board's Linux side via ADB."""
-        sync_script = os.path.join(BOARD_DIR, "time_sync.py")
-        remote_path = "/tmp/time_sync.py"
-        # Push script to board
-        result = subprocess.run(
-            [ADB, "push", sync_script, remote_path],
-            capture_output=True, text=True, timeout=15
-        )
-        if result.returncode != 0:
-            return False, f"ADB push failed:\n{result.stderr}"
-        # Run it
-        result = subprocess.run(
-            [ADB, "shell", f"python3 {remote_path}"],
-            capture_output=True, text=True, timeout=15
-        )
-        if result.returncode != 0:
-            return False, f"Time sync failed:\n{result.stderr}"
-        return True, result.stdout.strip()
-
     def upload_live(self):
         """Compile and upload a live sketch (.ino) directly to the board.
 
         Writes the selected sketch code to blink/blink.ino, compiles with
         arduino-cli, and uploads. Runs in a background thread to keep the GUI
-        responsive. For the Binary Clock sketch, also syncs time via Bridge RPC.
+        responsive.
         """
         if self.uploading:
             return
@@ -1420,21 +1377,7 @@ class LEDMatrixGUI:
                 if result.returncode != 0:
                     self.root.after(0, lambda: self.upload_done(False, f"Upload error:\n{result.stderr}"))
                     return
-
-                # For Binary Clock, sync time via Bridge RPC
-                if name == "Binary Clock":
-                    self.root.after(0, lambda: self.status_var.set("Syncing time via Bridge RPC..."))
-                    import time as _time
-                    _time.sleep(3)  # Wait for sketch to boot and register RPC
-                    ok, msg = self.sync_time_via_rpc()
-                    if ok:
-                        self.root.after(0, lambda: self.upload_done(
-                            True, f"Binary Clock uploaded & time synced! {msg}"))
-                    else:
-                        self.root.after(0, lambda: self.upload_done(True,
-                            f"Binary Clock uploaded but time sync failed: {msg}"))
-                else:
-                    self.root.after(0, lambda: self.upload_done(True, f"Live sketch '{name}' uploaded!"))
+                self.root.after(0, lambda: self.upload_done(True, f"Live sketch '{name}' uploaded!"))
             except Exception as e:
                 err = str(e)
                 self.root.after(0, lambda: self.upload_done(False, err))
