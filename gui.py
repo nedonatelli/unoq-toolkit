@@ -1,5 +1,18 @@
 #!/usr/bin/env python3
-"""Interactive GUI to design and upload patterns/animations to Arduino UNO Q LED Matrix (13x8)"""
+"""
+Interactive GUI for designing and uploading LED matrix patterns to the Arduino UNO Q.
+
+Features:
+  - Visual 13x8 grid editor with click-and-drag drawing
+  - Multi-frame timeline with drag-to-reorder for creating animations
+  - Pre-built shapes (static) and animations (multi-frame) that load into the editor
+  - Live sketches: generative .ino code compiled and uploaded directly to the board
+  - Preview mode to play back animations in the GUI before uploading
+  - One-click compile + upload via arduino-cli
+
+Board: Arduino UNO Q (STM32U585, Zephyr RTOS)
+LED Matrix: 13 columns x 8 rows (104 LEDs), frame = 4x uint32_t, MSB-first row-major
+"""
 
 import tkinter as tk
 import subprocess
@@ -7,13 +20,16 @@ import threading
 import copy
 import os
 
-ROWS = 8
-COLS = 13
-LED_SIZE = 40
-PAD = 2
+# --- Matrix dimensions and display settings ---
+ROWS = 8   # LED matrix row count
+COLS = 13  # LED matrix column count
+LED_SIZE = 40  # Pixel size of each LED cell in the GUI
+PAD = 2        # Pixel padding between LED cells
 
-# --- Pre-canned shapes (8 rows x 13 cols, 1=on 0=off) ---
-SHAPES = {
+# --- Pre-built shapes (8 rows x 13 cols, 1=on 0=off) ---
+# Each shape is a 2D list that maps directly to the LED matrix.
+# These are loaded into the current editor frame via the "Shapes" dropdown.
+SHAPES: dict[str, list[list[int]]] = {
     "Heart": [
         [0,0,0,1,1,0,0,0,1,1,0,0,0],
         [0,0,1,1,1,1,0,1,1,1,1,0,0],
@@ -116,11 +132,16 @@ SHAPES = {
     ],
 }
 
-# --- Pre-canned animations (list of (shape_data, duration_ms)) ---
-def _make_frames(data_list):
+# --- Pre-built animations ---
+# Each animation is a factory function (lambda or def) that returns a list of
+# (frame_grid, duration_ms) tuples. Using factories avoids computing all frames
+# at import time and allows randomized animations to vary on each load.
+
+def _make_frames(data_list: list[tuple[list[list[int]], int]]) -> list[tuple[list[list[bool]], int]]:
+    """Convert integer grid data to bool grids for internal use."""
     return [([[bool(cell) for cell in row] for row in frame], dur) for frame, dur in data_list]
 
-ANIMATIONS = {}
+ANIMATIONS: dict[str, object] = {}
 
 # Heartbeat
 ANIMATIONS["Heartbeat"] = lambda: _make_frames([
@@ -130,14 +151,12 @@ ANIMATIONS["Heartbeat"] = lambda: _make_frames([
     ([[False]*COLS for _ in range(ROWS)], 600),
 ])
 
-# Rain
+# Rain — drops fall from the top row, seeded for reproducibility
 def _rain_frames():
     import random
     random.seed(42)
-    frames = []
-    frames = []
-    positions = {}  # col -> list of row positions
-    random.seed(42)
+    frames: list[tuple[list[list[bool]], int]] = []
+    positions: dict[int, list[int]] = {}
     for f in range(10):
         grid = [[False]*COLS for _ in range(ROWS)]
         # Add new drops at top
@@ -148,7 +167,7 @@ def _rain_frames():
                     positions[c] = []
                 positions[c].append(0)
         # Draw and advance drops
-        new_positions = {}
+        new_positions: dict[int, list[int]] = {}
         for c, rows in positions.items():
             new_rows = []
             for r in rows:
@@ -163,7 +182,7 @@ def _rain_frames():
 
 ANIMATIONS["Rain"] = _rain_frames
 
-# Wave
+# Wave — sinusoidal columns that shift phase each frame
 def _wave_frames():
     import math
     frames = []
@@ -178,7 +197,7 @@ def _wave_frames():
 
 ANIMATIONS["Wave"] = _wave_frames
 
-# Expanding diamond
+# Pulse — diamond outline expands from center then contracts
 def _expand_frames():
     frames = []
     cx, cy = 6, 3.5
@@ -201,7 +220,7 @@ def _expand_frames():
 
 ANIMATIONS["Pulse"] = _expand_frames
 
-# Scrolling marquee
+# Scroll HI — "HI" text scrolls right-to-left across the matrix
 def _scroll_frames():
     # Create a wide "HI" pattern and scroll it across
     text_pattern = [
@@ -228,7 +247,7 @@ def _scroll_frames():
 
 ANIMATIONS["Scroll HI"] = _scroll_frames
 
-# Snake
+# Snake — a short segment chases around the matrix border
 def _snake_frames():
     # Snake that moves around the border
     border_cells = []
@@ -249,7 +268,7 @@ def _snake_frames():
 
 ANIMATIONS["Snake"] = _snake_frames
 
-# Fireworks
+# Firework — a dot rises from the bottom then explodes into expanding rings
 def _firework_frames():
     frames = []
     cx, cy = 6, 4
@@ -274,8 +293,14 @@ def _firework_frames():
 ANIMATIONS["Firework"] = _firework_frames
 
 # --- Live sketches (generative code that runs on-board) ---
-# Each returns a complete .ino sketch string
-LIVE_SKETCHES = {
+# Unlike shapes/animations which are designed in the GUI and uploaded as static
+# frame data, live sketches are complete Arduino .ino programs that run generative
+# logic directly on the STM32. They use ADC noise from pin A0 as a hardware
+# entropy source for randomization.
+#
+# NOTE: Zephyr's Arduino API does not support random() with no arguments.
+#       Always use random(max) or random(min, max).
+LIVE_SKETCHES: dict[str, str] = {
     "ADC Noise Random": '''\
 // ADC noise-seeded random LED matrix
 #include "Arduino_LED_Matrix.h"
@@ -524,25 +549,117 @@ void loop() {
   delay(80);
 }
 ''',
+    "Bouncing Spinner": '''\
+// ADC noise-seeded bouncing shape that rotates X <-> +
+#include "Arduino_LED_Matrix.h"
+
+Arduino_LED_Matrix matrix;
+
+int x, y;
+int dx, dy;
+int phase = 0;  // 0 = X shape, 1 = + shape
+
+uint32_t adcNoiseSeed() {
+  uint32_t seed = 0;
+  for (int i = 0; i < 32; i++) {
+    seed = (seed << 1) | (analogRead(A0) & 1);
+  }
+  return seed;
 }
-PORT = "/dev/cu.usbmodem19087929472"
-FQBN = "arduino:zephyr:unoq"
-SKETCH_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "blink")
 
-COLOR_ON = "#00ff44"
-COLOR_OFF = "#222222"
+void gridToFrame(uint8_t grid[8][13], uint32_t* frame) {
+  frame[0] = frame[1] = frame[2] = frame[3] = 0;
+  for (int r = 0; r < 8; r++) {
+    for (int c = 0; c < 13; c++) {
+      int bit = r * 13 + c;
+      if (grid[r][c]) {
+        frame[bit / 32] |= (1UL << (31 - (bit % 32)));
+      }
+    }
+  }
+}
+
+void setup() {
+  matrix.begin();
+  randomSeed(adcNoiseSeed());
+
+  // Random starting position (within bounds for 3x3)
+  x = random(0, 11);  // 0..10 so x+2 <= 12
+  y = random(0, 6);   // 0..5 so y+2 <= 7
+
+  dx = random(2) ? 1 : -1;
+  dy = random(2) ? 1 : -1;
+}
+
+void loop() {
+  uint8_t grid[8][13] = {0};
+
+  if (phase == 0) {
+    // X shape (diagonal cross)
+    grid[y][x] = 1;
+    grid[y][x+2] = 1;
+    grid[y+1][x+1] = 1;
+    grid[y+2][x] = 1;
+    grid[y+2][x+2] = 1;
+  } else {
+    // + shape (axis-aligned cross)
+    grid[y][x+1] = 1;
+    grid[y+1][x] = 1;
+    grid[y+1][x+1] = 1;
+    grid[y+1][x+2] = 1;
+    grid[y+2][x+1] = 1;
+  }
+
+  uint32_t frame[4];
+  gridToFrame(grid, frame);
+  matrix.loadFrame(frame);
+
+  // Move
+  x += dx;
+  y += dy;
+
+  // Bounce off edges
+  if (x <= 0 || x >= 10) dx = -dx;
+  if (y <= 0 || y >= 5) dy = -dy;
+
+  if (x < 0) x = 0;
+  if (x > 10) x = 10;
+  if (y < 0) y = 0;
+  if (y > 5) y = 5;
+
+  // Rotate shape each step
+  phase = 1 - phase;
+
+  delay(100);
+}
+''',
+}
+# --- Board connection settings ---
+PORT = "/dev/cu.usbmodem19087929472"  # USB serial port (programming only, not CDC)
+FQBN = "arduino:zephyr:unoq"          # Fully Qualified Board Name for arduino-cli
+SKETCH_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "blink")  # Scratch dir for .ino
+
+# --- GUI colors ---
+COLOR_ON = "#00ff44"   # Active LED color (green)
+COLOR_OFF = "#222222"  # Inactive LED color (dark gray)
 
 
-def empty_frame():
+def empty_frame() -> list[list[bool]]:
+    """Return a blank 8x13 grid (all LEDs off)."""
     return [[False] * COLS for _ in range(ROWS)]
 
 
-def copy_frame(frame):
+def copy_frame(frame: list[list[bool]]) -> list[list[bool]]:
+    """Deep-copy a frame grid so edits don't alias the original."""
     return copy.deepcopy(frame)
 
 
-def state_to_uint32s(state):
-    """Convert 8x13 bool grid to 4x uint32_t frame data."""
+def state_to_uint32s(state: list[list[bool]]) -> list[int]:
+    """Convert an 8x13 bool grid to the 4x uint32_t frame format expected by Arduino_LED_Matrix.
+
+    The 104 LEDs are packed MSB-first into four 32-bit words. The remaining
+    24 bits (positions 104-127) in frame[3] are unused.
+    """
     bits = []
     for r in range(ROWS):
         for c in range(COLS):
@@ -555,7 +672,12 @@ def state_to_uint32s(state):
 
 
 class CanvasButton:
-    """A button drawn on a canvas for reliable color control on macOS."""
+    """A button drawn directly on a tk.Canvas for reliable color control on macOS.
+
+    Standard tk.Button ignores bg color on macOS due to native widget rendering.
+    This workaround draws a colored rectangle with centered text and handles
+    hover highlighting and click events manually.
+    """
 
     def __init__(self, parent, text, command, bg="#333333", fg="white",
                  width=80, height=32, font=("Helvetica", 11)):
@@ -602,7 +724,25 @@ class CanvasButton:
 
 
 class LEDMatrixGUI:
-    def __init__(self, root):
+    """Main application window for the LED matrix editor.
+
+    Layout (top to bottom):
+      1. LED grid canvas — click/drag to toggle LEDs on/off
+      2. Draw tools row — All On, All Off, Invert
+      3. Presets row — Shapes dropdown + Load, Animations dropdown + Load
+      4. Live sketches row — dropdown + Upload (compiles .ino directly)
+      5. Timeline — scrollable frame thumbnails with drag-to-reorder
+      6. Duration entry — per-frame timing in milliseconds
+      7. Action buttons — Preview (plays animation in GUI), Upload (compiles & flashes)
+      8. Status bar
+
+    Workflow:
+      - Design frames using the grid editor and timeline
+      - generate_sketch() converts frames to a .ino file
+      - arduino-cli compiles and uploads via OpenOCD over USB
+    """
+
+    def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("UNO Q LED Matrix Animator")
         self.root.configure(bg="#111111")
@@ -627,7 +767,7 @@ class LEDMatrixGUI:
         )
         self.canvas.pack(padx=10, pady=10)
 
-        self.rects = [[None] * COLS for _ in range(ROWS)]
+        self.rects: list[list[int]] = [[0] * COLS for _ in range(ROWS)]
         for r in range(ROWS):
             for c in range(COLS):
                 x1 = PAD + c * (LED_SIZE + PAD)
@@ -775,7 +915,8 @@ class LEDMatrixGUI:
 
     # --- Drawing ---
 
-    def get_cell(self, event):
+    def get_cell(self, event) -> tuple[int | None, int | None]:
+        """Map a canvas pixel coordinate to a grid (row, col), or (None, None) if out of bounds."""
         c = (event.x - PAD) // (LED_SIZE + PAD)
         r = (event.y - PAD) // (LED_SIZE + PAD)
         if 0 <= r < ROWS and 0 <= c < COLS:
@@ -821,6 +962,12 @@ class LEDMatrixGUI:
                 self.canvas.itemconfig(self.rects[r][c], fill=color)
 
     def upload_live(self):
+        """Compile and upload a live sketch (.ino) directly to the board.
+
+        Writes the selected sketch code to blink/blink.ino, compiles with
+        arduino-cli, and uploads. Runs in a background thread to keep the GUI
+        responsive.
+        """
         if self.uploading:
             return
         if self.previewing:
@@ -858,6 +1005,7 @@ class LEDMatrixGUI:
         threading.Thread(target=do_upload, daemon=True).start()
 
     def load_shape(self):
+        """Replace the current frame's grid with the selected preset shape."""
         name = self.shape_var.get()
         shape = SHAPES[name]
         state = [[bool(cell) for cell in row] for row in shape]
@@ -866,6 +1014,7 @@ class LEDMatrixGUI:
         self.rebuild_timeline()
 
     def load_animation(self):
+        """Replace the entire timeline with the selected preset animation's frames."""
         name = self.anim_var.get()
         self.frames = ANIMATIONS[name]()
         self.current_frame_idx = 0
@@ -926,6 +1075,12 @@ class LEDMatrixGUI:
         self.frames[self.current_frame_idx] = (state, dur)
 
     def rebuild_timeline(self):
+        """Redraw all frame thumbnails in the timeline strip.
+
+        Each thumbnail is a small canvas showing a miniature view of the frame.
+        The currently selected frame gets a green border. Thumbnails support
+        click-to-select and drag-to-reorder.
+        """
         for widget in self.timeline_frame.winfo_children():
             widget.destroy()
 
@@ -1042,6 +1197,11 @@ class LEDMatrixGUI:
     # --- Upload ---
 
     def generate_sketch(self):
+        """Generate a .ino sketch from the current timeline frames and write it to disk.
+
+        Single-frame patterns use loadFrame() for a static display.
+        Multi-frame animations use loadSequence()/playSequence() with per-frame durations.
+        """
         if len(self.frames) == 1:
             frame = state_to_uint32s(self.frames[0][0])
             sketch = f"""// Auto-generated LED Matrix pattern
@@ -1093,6 +1253,11 @@ void loop() {{
             f.write(sketch)
 
     def upload(self):
+        """Compile the generated sketch and upload it to the board via arduino-cli.
+
+        Runs compilation and upload in a background thread. The status bar and
+        upload button update to reflect progress/success/failure.
+        """
         if self.uploading:
             return
         if self.previewing:

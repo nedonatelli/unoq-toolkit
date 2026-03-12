@@ -1,10 +1,8 @@
-// ADC noise-seeded bouncing 2x2 square
+// ADC noise-seeded rain effect
 #include "Arduino_LED_Matrix.h"
 
 Arduino_LED_Matrix matrix;
-
-int x, y;
-int dx, dy;
+uint8_t grid[8][13] = {0};
 
 uint32_t adcNoiseSeed() {
   uint32_t seed = 0;
@@ -14,7 +12,7 @@ uint32_t adcNoiseSeed() {
   return seed;
 }
 
-void gridToFrame(uint8_t grid[8][13], uint32_t* frame) {
+void gridToFrame(uint32_t* frame) {
   frame[0] = frame[1] = frame[2] = frame[3] = 0;
   for (int r = 0; r < 8; r++) {
     for (int c = 0; c < 13; c++) {
@@ -29,42 +27,28 @@ void gridToFrame(uint8_t grid[8][13], uint32_t* frame) {
 void setup() {
   matrix.begin();
   randomSeed(adcNoiseSeed());
-
-  // Random starting position (within bounds for 2x2)
-  x = random(0, 12);  // 0..11 so x+1 <= 12
-  y = random(0, 7);   // 0..6 so y+1 <= 7
-
-  // Random velocity: -1 or +1 for each axis
-  dx = random(2) ? 1 : -1;
-  dy = random(2) ? 1 : -1;
 }
 
 void loop() {
-  uint8_t grid[8][13] = {0};
-
-  // Draw 2x2 square
-  grid[y][x] = 1;
-  grid[y][x+1] = 1;
-  grid[y+1][x] = 1;
-  grid[y+1][x+1] = 1;
+  // Shift all rows down
+  for (int r = 7; r > 0; r--) {
+    for (int c = 0; c < 13; c++) {
+      grid[r][c] = grid[r-1][c];
+    }
+  }
+  // Clear top row and add new random drops
+  for (int c = 0; c < 13; c++) {
+    grid[0][c] = 0;
+  }
+  // Re-seed from ADC noise and spawn 1-3 drops
+  randomSeed(adcNoiseSeed());
+  int nDrops = random(1, 4);
+  for (int i = 0; i < nDrops; i++) {
+    grid[0][random(13)] = 1;
+  }
 
   uint32_t frame[4];
-  gridToFrame(grid, frame);
+  gridToFrame(frame);
   matrix.loadFrame(frame);
-
-  // Move
-  x += dx;
-  y += dy;
-
-  // Bounce off edges
-  if (x <= 0 || x >= 11) dx = -dx;
-  if (y <= 0 || y >= 6) dy = -dy;
-
-  // Clamp just in case
-  if (x < 0) x = 0;
-  if (x > 11) x = 11;
-  if (y < 0) y = 0;
-  if (y > 6) y = 6;
-
-  delay(80);
+  delay(120);
 }
