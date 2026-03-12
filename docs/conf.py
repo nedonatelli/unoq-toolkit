@@ -27,7 +27,7 @@ templates_path = ["_templates"]
 exclude_patterns = ["_build"]
 
 html_theme = "sphinx_rtd_theme"
-html_static_path = ["_static"]
+html_static_path = []
 
 # Napoleon settings for Google/NumPy style docstrings
 napoleon_google_docstrings = True
