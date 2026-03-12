@@ -1,6 +1,10 @@
-# UNO Q LED Matrix Animator
+# unoq-toolkit
 
-A desktop GUI for designing, previewing, and uploading LED matrix patterns and animations to the **Arduino UNO Q** (STM32U585 Cortex-M33, Zephyr RTOS).
+A collection of tools for the **Arduino UNO Q** (STM32U585 Cortex-M33, Zephyr RTOS).
+
+## LED Matrix Animator
+
+A desktop GUI for designing, previewing, and uploading LED matrix patterns and animations.
 
 ## Features
 
