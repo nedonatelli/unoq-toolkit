@@ -6,7 +6,7 @@ import re
 import time
 import os
 
-ADB = "PLACEHOLDER_HOME_Library/Arduino15/packages/arduino/tools/adb/32.0.0/adb"
+ADB = os.path.join(os.path.expanduser("~"), "Library/Arduino15/packages/arduino/tools/adb/32.0.0/adb")
 FQBN = "arduino:zephyr:unoq"
 PORT = "/dev/cu.usbmodem19087929472"
 SKETCH_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "blink")
