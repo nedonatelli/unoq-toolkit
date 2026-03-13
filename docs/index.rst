@@ -10,5 +10,6 @@ A collection of tools for the **Arduino UNO Q** (STM32U585 Cortex-M33, Zephyr RT
    getting-started
    led-matrix-animator
    wifi-tools
+   tft-display
    board-notes
    api/index

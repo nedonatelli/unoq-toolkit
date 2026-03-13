@@ -67,6 +67,14 @@ accepts hex-encoded LED frames, making it reusable by any Linux-side script
    It does **not** register methods with the router — use ``Arduino_RouterBridge``
    for any Bridge RPC workflow.
 
+TFT Display (ST7789)
+--------------------
+
+The Adafruit Mini PiTFT 135x240 connects via SPI (D13/D11/D10/D9/D8/D7).
+Hardware SPI requires patching ``Arduino_ST7789.cpp`` to use ``SPI_MODE0``
+(the library defaults to ``SPI_MODE2`` for unknown platforms). See
+:doc:`tft-display` for full wiring, library details, and performance notes.
+
 Bootloader Recovery
 -------------------
 
