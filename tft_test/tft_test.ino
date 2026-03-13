@@ -1,5 +1,5 @@
 // Spinning 3D cube on Adafruit Mini PiTFT 135x240 (ST7789)
-// Uses software SPI (HW SPI not supported on Zephyr core)
+// HW SPI + partial canvas flush for fast, consistent framerate
 //
 // Wiring (display -> UNO Q):
 //   SCK  -> D13
@@ -23,11 +23,15 @@
 #define TFT_DC    9
 #define TFT_RST   8
 #define TFT_BL    7
-#define TFT_MOSI 11
-#define TFT_SCK  13
 
-Arduino_DataBus *bus = new Arduino_SWSPI(TFT_DC, TFT_CS, TFT_SCK, TFT_MOSI, -1);
+// ST7789 supports up to ~62MHz SPI
+Arduino_DataBus *bus = new Arduino_HWSPI(TFT_DC, TFT_CS);
 Arduino_ST7789 *tft = new Arduino_ST7789(bus, TFT_RST, 0, true, 135, 240, 52, 40, 53, 40);
+
+// Partial canvas: 160x120 centered on the cube area
+const int CVW = 160, CVH = 120;
+const int CVX = 40, CVY = 7;  // top-left of canvas on screen
+Arduino_Canvas *canvas = new Arduino_Canvas(CVW, CVH, tft, CVX, CVY);
 
 float verts[8][3] = {
   {-1,-1,-1}, { 1,-1,-1}, { 1, 1,-1}, {-1, 1,-1},
@@ -48,15 +52,11 @@ uint16_t edgeColors[12] = {
 
 float angleX = 0, angleY = 0, angleZ = 0;
 
-const int CX = 120;
-const int CY = 67;
-const float SCALE = 32.0;
+// Center of cube in canvas-local coords
+const int CX = CVW / 2;
+const int CY = CVH / 2;
+const float SCALE = 40.0;
 
-int prevPx[8], prevPy[8];
-int curPx[8], curPy[8];
-bool firstFrame = true;
-
-// Precomputed trig values (updated once per frame)
 float sx_, cx_, sy_, cy_, sz_, cz_;
 
 void project(float x, float y, float z, int &sx, int &sy) {
@@ -77,30 +77,27 @@ void setup() {
   delay(100);
   tft->setRotation(1);
   tft->fillScreen(BLACK);
+
+  canvas->begin();
 }
 
 void loop() {
-  // Precompute trig once per frame
+  canvas->fillScreen(BLACK);
+
   sx_ = sin(angleX); cx_ = cos(angleX);
   sy_ = sin(angleY); cy_ = cos(angleY);
   sz_ = sin(angleZ); cz_ = cos(angleZ);
 
+  int px[8], py[8];
   for (int i = 0; i < 8; i++)
-    project(verts[i][0], verts[i][1], verts[i][2], curPx[i], curPy[i]);
+    project(verts[i][0], verts[i][1], verts[i][2], px[i], py[i]);
 
-  // Erase old, draw new for each edge back-to-back to minimize flicker
   for (int i = 0; i < 12; i++) {
     int a = edges[i][0], b = edges[i][1];
-    if (!firstFrame)
-      tft->drawLine(prevPx[a], prevPy[a], prevPx[b], prevPy[b], BLACK);
-    tft->drawLine(curPx[a], curPy[a], curPx[b], curPy[b], edgeColors[i]);
+    canvas->drawLine(px[a], py[a], px[b], py[b], edgeColors[i]);
   }
-  firstFrame = false;
 
-  for (int i = 0; i < 8; i++) {
-    prevPx[i] = curPx[i];
-    prevPy[i] = curPy[i];
-  }
+  canvas->flush();
 
   angleX += 0.03;
   angleY += 0.05;

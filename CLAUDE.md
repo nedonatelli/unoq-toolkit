@@ -78,7 +78,7 @@ bridge.call("set_frame", hex_frame_string)
 
 ## TFT Display (Adafruit Mini PiTFT 135x240)
 
-ST7789 driver, 240x135 landscape. Must use **software SPI** — hardware SPI does not work on the Zephyr core.
+ST7789 driver, 240x135 landscape. Hardware SPI works after patching `Arduino_ST7789.cpp` to use `SPI_MODE0` (the library defaults to `SPI_MODE2` for unknown platforms).
 
 Wiring:
 | Display | UNO Q |
