@@ -1,5 +1,5 @@
 // Spinning 3D cube on Adafruit Mini PiTFT 135x240 (ST7789)
-// HW SPI + partial canvas flush for fast, consistent framerate
+// HW SPI + partial canvas + fixed-point math (no floats in render loop)
 //
 // Wiring (display -> UNO Q):
 //   SCK  -> D13
@@ -12,7 +12,6 @@
 //   GND  -> GND
 #include <Arduino_GFX_Library.h>
 #include <SPI.h>
-#include <math.h>
 
 #define BLACK   0x0000
 #define CYAN    0x07FF
@@ -24,18 +23,66 @@
 #define TFT_RST   8
 #define TFT_BL    7
 
-// ST7789 supports up to ~62MHz SPI
-Arduino_DataBus *bus = new Arduino_HWSPI(TFT_DC, TFT_CS);
+Arduino_DataBus *bus = new Arduino_HWSPI(TFT_DC, TFT_CS, &SPI, 60000000);
 Arduino_ST7789 *tft = new Arduino_ST7789(bus, TFT_RST, 0, true, 135, 240, 52, 40, 53, 40);
 
-// Partial canvas: 160x120 centered on the cube area
 const int CVW = 160, CVH = 120;
-const int CVX = 40, CVY = 7;  // top-left of canvas on screen
+const int CVX = 40, CVY = 7;
 Arduino_Canvas *canvas = new Arduino_Canvas(CVW, CVH, tft, CVX, CVY);
 
-float verts[8][3] = {
-  {-1,-1,-1}, { 1,-1,-1}, { 1, 1,-1}, {-1, 1,-1},
-  {-1,-1, 1}, { 1,-1, 1}, { 1, 1, 1}, {-1, 1, 1}
+// Fixed-point: 10 fractional bits (multiply by 1024)
+#define FP_SHIFT 10
+#define FP_ONE   (1 << FP_SHIFT)
+
+// 256-entry sine table, values in fixed-point [-1024..1024]
+// Covers 0..2*PI in 256 steps
+static const int16_t sinTab[256] PROGMEM = {
+     0,   25,   50,   75,  100,  125,  150,  175,
+   199,  224,  248,  273,  297,  321,  344,  368,
+   391,  414,  437,  460,  482,  504,  526,  547,
+   568,  589,  609,  629,  649,  668,  687,  706,
+   724,  741,  758,  775,  791,  807,  822,  837,
+   851,  865,  878,  891,  903,  915,  926,  936,
+   946,  955,  964,  972,  980,  987,  993,  999,
+  1004, 1009, 1013, 1016, 1019, 1021, 1023, 1024,
+  1024, 1024, 1023, 1021, 1019, 1016, 1013, 1009,
+  1004,  999,  993,  987,  980,  972,  964,  955,
+   946,  936,  926,  915,  903,  891,  878,  865,
+   851,  837,  822,  807,  791,  775,  758,  741,
+   724,  706,  687,  668,  649,  629,  609,  589,
+   568,  547,  526,  504,  482,  460,  437,  414,
+   391,  368,  344,  321,  297,  273,  248,  224,
+   199,  175,  150,  125,  100,   75,   50,   25,
+     0,  -25,  -50,  -75, -100, -125, -150, -175,
+  -199, -224, -248, -273, -297, -321, -344, -368,
+  -391, -414, -437, -460, -482, -504, -526, -547,
+  -568, -589, -609, -629, -649, -668, -687, -706,
+  -724, -741, -758, -775, -791, -807, -822, -837,
+  -851, -865, -878, -891, -903, -915, -926, -936,
+  -946, -955, -964, -972, -980, -987, -993, -999,
+ -1004,-1009,-1013,-1016,-1019,-1021,-1023,-1024,
+ -1024,-1024,-1023,-1021,-1019,-1016,-1013,-1009,
+ -1004, -999, -993, -987, -980, -972, -964, -955,
+  -946, -936, -926, -915, -903, -891, -878, -865,
+  -851, -837, -822, -807, -791, -775, -758, -741,
+  -724, -706, -687, -668, -649, -629, -609, -589,
+  -568, -547, -526, -504, -482, -460, -437, -414,
+  -391, -368, -344, -321, -297, -273, -248, -224,
+  -199, -175, -150, -125, -100,  -75,  -50,  -25
+};
+
+inline int16_t fpSin(uint8_t angle) { return (int16_t)pgm_read_word(&sinTab[angle]); }
+inline int16_t fpCos(uint8_t angle) { return (int16_t)pgm_read_word(&sinTab[(angle + 64) & 255]); }
+
+// Fixed-point multiply: (a * b) >> FP_SHIFT
+inline int32_t fpMul(int32_t a, int32_t b) { return (a * b) >> FP_SHIFT; }
+
+// Cube vertices in fixed-point: ±FP_ONE
+const int32_t verts[8][3] = {
+  {-FP_ONE,-FP_ONE,-FP_ONE}, { FP_ONE,-FP_ONE,-FP_ONE},
+  { FP_ONE, FP_ONE,-FP_ONE}, {-FP_ONE, FP_ONE,-FP_ONE},
+  {-FP_ONE,-FP_ONE, FP_ONE}, { FP_ONE,-FP_ONE, FP_ONE},
+  { FP_ONE, FP_ONE, FP_ONE}, {-FP_ONE, FP_ONE, FP_ONE}
 };
 
 int edges[12][2] = {
@@ -50,23 +97,27 @@ uint16_t edgeColors[12] = {
   MAGENTA, MAGENTA, MAGENTA, MAGENTA
 };
 
-float angleX = 0, angleY = 0, angleZ = 0;
+uint8_t angleX = 0, angleY = 0, angleZ = 0;
 
-// Center of cube in canvas-local coords
 const int CX = CVW / 2;
 const int CY = CVH / 2;
-const float SCALE = 40.0;
+const int32_t SCALE = 40;
 
-float sx_, cx_, sy_, cy_, sz_, cz_;
+// Precomputed trig
+int16_t sx_, cx_, sy_, cy_, sz_, cz_;
 
-void project(float x, float y, float z, int &sx, int &sy) {
-  float y1 = y * cx_ - z * sx_;
-  float z1 = y * sx_ + z * cx_;
-  float x2 = x * cy_ + z1 * sy_;
-  float x3 = x2 * cz_ - y1 * sz_;
-  float y3 = x2 * sz_ + y1 * cz_;
-  sx = CX + (int)(x3 * SCALE);
-  sy = CY + (int)(y3 * SCALE);
+void project(int32_t x, int32_t y, int32_t z, int &screenX, int &screenY) {
+  // Rotate X
+  int32_t y1 = fpMul(y, cx_) - fpMul(z, sx_);
+  int32_t z1 = fpMul(y, sx_) + fpMul(z, cx_);
+  // Rotate Y
+  int32_t x2 = fpMul(x, cy_) + fpMul(z1, sy_);
+  // Rotate Z
+  int32_t x3 = fpMul(x2, cz_) - fpMul(y1, sz_);
+  int32_t y3 = fpMul(x2, sz_) + fpMul(y1, cz_);
+
+  screenX = CX + (int)((x3 * SCALE) >> FP_SHIFT);
+  screenY = CY + (int)((y3 * SCALE) >> FP_SHIFT);
 }
 
 void setup() {
@@ -84,9 +135,9 @@ void setup() {
 void loop() {
   canvas->fillScreen(BLACK);
 
-  sx_ = sin(angleX); cx_ = cos(angleX);
-  sy_ = sin(angleY); cy_ = cos(angleY);
-  sz_ = sin(angleZ); cz_ = cos(angleZ);
+  sx_ = fpSin(angleX); cx_ = fpCos(angleX);
+  sy_ = fpSin(angleY); cy_ = fpCos(angleY);
+  sz_ = fpSin(angleZ); cz_ = fpCos(angleZ);
 
   int px[8], py[8];
   for (int i = 0; i < 8; i++)
@@ -99,7 +150,7 @@ void loop() {
 
   canvas->flush();
 
-  angleX += 0.03;
-  angleY += 0.05;
-  angleZ += 0.02;
+  angleX += 1;
+  angleY += 2;
+  angleZ += 1;
 }
