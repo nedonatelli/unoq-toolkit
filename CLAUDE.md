@@ -76,6 +76,26 @@ bridge.call("set_frame", hex_frame_string)
 
 `Arduino_RPClite` is for direct serial — it does NOT register methods with the router and calls will fail with "method not available."
 
+## TFT Display (Adafruit Mini PiTFT 135x240)
+
+ST7789 driver, 240x135 landscape. Must use **software SPI** — hardware SPI does not work on the Zephyr core.
+
+Wiring:
+| Display | UNO Q |
+|---------|-------|
+| SCK     | D13   |
+| MOSI    | D11   |
+| CS      | D10   |
+| DC      | D9    |
+| RST     | D8    |
+| BL      | D7    |
+| VIN     | 3.3V  |
+| GND     | GND   |
+
+Library: `GFX Library for Arduino` (Arduino_GFX). The Adafruit ST7789 library does not compile on Zephyr (missing `pins_arduino.h`).
+
+ST7789 GRAM offsets for 135x240 panel: `col_offset1=52, row_offset1=40, col_offset2=53, row_offset2=40`.
+
 ## Board Quirks
 
 - `Serial` maps to hardware UART pins (usart1), NOT USB CDC. USB port is programming-only.
