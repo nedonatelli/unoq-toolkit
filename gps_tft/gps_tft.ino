@@ -2,8 +2,11 @@
 // Shows satellite sky plot, signal bars, coordinates, and time
 // GPS TX -> D0 (RX), TFT on HW SPI (D13/D11/D10/D9/D8/D7)
 // u-blox M10 at 115200 baud
+//
+// Uses full-screen canvas (240x135) for flicker-free rendering
 #include <Arduino_GFX_Library.h>
 #include <SPI.h>
+#include <math.h>
 
 #define BLACK   0x0000
 #define WHITE   0xFFFF
@@ -11,7 +14,6 @@
 #define CYAN    0x07FF
 #define YELLOW  0xFFE0
 #define RED     0xF800
-#define DKGREEN 0x03E0
 #define GRAY    0x8410
 
 #define TFT_CS   10
@@ -21,6 +23,7 @@
 
 Arduino_DataBus *bus = new Arduino_HWSPI(TFT_DC, TFT_CS, &SPI, 60000000);
 Arduino_ST7789 *tft = new Arduino_ST7789(bus, TFT_RST, 0, true, 135, 240, 52, 40, 53, 40);
+Arduino_Canvas *canvas = new Arduino_Canvas(240, 135, tft, 0, 0);
 
 // NMEA parser
 char lineBuf[128];
@@ -42,14 +45,13 @@ float hdop = 99.9;
 #define MAX_SATS 32
 struct SatInfo {
   int prn;
-  int elev;   // elevation 0-90 degrees
-  int azim;   // azimuth 0-360 degrees
-  int snr;    // signal-to-noise 0-99 dB-Hz, 0 = not tracking
+  int elev;
+  int azim;
+  int snr;
   bool active;
 } sats[MAX_SATS];
 int satCount = 0;
 
-// Parse comma-separated field from NMEA
 int getField(const char *s, int fieldNum, char *out, int maxLen) {
   int field = 0, i = 0, start = 0;
   while (s[i]) {
@@ -72,47 +74,25 @@ int getField(const char *s, int fieldNum, char *out, int maxLen) {
 
 void parseGGA(const char *line) {
   char val[20];
-
-  // Time (field 1): HHMMSS.ss
   if (getField(line, 1, val, sizeof(val)) >= 6) {
-    timeStr[0] = val[0]; timeStr[1] = val[1];
-    timeStr[2] = ':';
-    timeStr[3] = val[2]; timeStr[4] = val[3];
-    timeStr[5] = ':';
-    timeStr[6] = val[4]; timeStr[7] = val[5];
-    timeStr[8] = '\0';
+    timeStr[0] = val[0]; timeStr[1] = val[1]; timeStr[2] = ':';
+    timeStr[3] = val[2]; timeStr[4] = val[3]; timeStr[5] = ':';
+    timeStr[6] = val[4]; timeStr[7] = val[5]; timeStr[8] = '\0';
   }
-
-  // Latitude (field 2) + N/S (field 3)
   if (getField(line, 2, val, sizeof(val)) > 0) {
-    // DDMM.MMMM -> copy as-is for display
     strncpy(latStr, val, sizeof(latStr) - 1);
     latStr[sizeof(latStr) - 1] = '\0';
   }
   if (getField(line, 3, val, sizeof(val)) > 0) latDir = val[0];
-
-  // Longitude (field 4) + E/W (field 5)
   if (getField(line, 4, val, sizeof(val)) > 0) {
     strncpy(lonStr, val, sizeof(lonStr) - 1);
     lonStr[sizeof(lonStr) - 1] = '\0';
   }
   if (getField(line, 5, val, sizeof(val)) > 0) lonDir = val[0];
-
-  // Fix quality (field 6)
-  if (getField(line, 6, val, sizeof(val)) > 0)
-    fixQuality = atoi(val);
-  else
-    fixQuality = 0;
-
-  // Sats in use (field 7)
-  if (getField(line, 7, val, sizeof(val)) > 0)
-    satsInUse = atoi(val);
-
-  // HDOP (field 8)
-  if (getField(line, 8, val, sizeof(val)) > 0)
-    hdop = atof(val);
-
-  // Altitude (field 9)
+  if (getField(line, 6, val, sizeof(val)) > 0) fixQuality = atoi(val);
+  else fixQuality = 0;
+  if (getField(line, 7, val, sizeof(val)) > 0) satsInUse = atoi(val);
+  if (getField(line, 8, val, sizeof(val)) > 0) hdop = atof(val);
   if (getField(line, 9, val, sizeof(val)) > 0) {
     strncpy(altStr, val, sizeof(altStr) - 1);
     altStr[sizeof(altStr) - 1] = '\0';
@@ -121,41 +101,29 @@ void parseGGA(const char *line) {
 
 void parseGSV(const char *line) {
   char val[16];
-
-  // Field 3: total sats in view
   if (getField(line, 3, val, sizeof(val)) > 0)
     satsInView = atoi(val);
 
-  // Parse up to 4 satellites per GSV sentence (fields 4-7, 8-11, 12-15, 16-19)
   for (int s = 0; s < 4; s++) {
     int base = 4 + s * 4;
     char prnStr[8];
     if (getField(line, base, prnStr, sizeof(prnStr)) == 0) break;
-
     int prn = atoi(prnStr);
     if (prn == 0) continue;
 
-    // Find or add this satellite
     int idx = -1;
     for (int i = 0; i < satCount; i++) {
       if (sats[i].prn == prn) { idx = i; break; }
     }
-    if (idx < 0 && satCount < MAX_SATS) {
-      idx = satCount++;
-    }
+    if (idx < 0 && satCount < MAX_SATS) idx = satCount++;
     if (idx < 0) continue;
 
     sats[idx].prn = prn;
     sats[idx].active = true;
-
-    if (getField(line, base + 1, val, sizeof(val)) > 0)
-      sats[idx].elev = atoi(val);
-    if (getField(line, base + 2, val, sizeof(val)) > 0)
-      sats[idx].azim = atoi(val);
-    if (getField(line, base + 3, val, sizeof(val)) > 0)
-      sats[idx].snr = atoi(val);
-    else
-      sats[idx].snr = 0;
+    if (getField(line, base + 1, val, sizeof(val)) > 0) sats[idx].elev = atoi(val);
+    if (getField(line, base + 2, val, sizeof(val)) > 0) sats[idx].azim = atoi(val);
+    if (getField(line, base + 3, val, sizeof(val)) > 0) sats[idx].snr = atoi(val);
+    else sats[idx].snr = 0;
   }
 }
 
@@ -164,150 +132,90 @@ void processLine(const char *line) {
   if (strstr(line, "GSV")) parseGSV(line);
 }
 
-// Sky plot: circular view with satellites plotted by azimuth/elevation
-void drawSkyPlot(int cx, int cy, int radius) {
-  // Draw horizon circles
-  tft->drawCircle(cx, cy, radius, GRAY);
-  tft->drawCircle(cx, cy, radius * 2 / 3, GRAY);
-  tft->drawCircle(cx, cy, radius / 3, GRAY);
+uint16_t snrColor(int snr) {
+  if (snr == 0) return GRAY;
+  if (snr < 20) return RED;
+  if (snr < 35) return YELLOW;
+  return GREEN;
+}
 
-  // Draw crosshairs
-  tft->drawLine(cx - radius, cy, cx + radius, cy, GRAY);
-  tft->drawLine(cx, cy - radius, cx, cy + radius, GRAY);
+void drawSkyPlot(Arduino_Canvas *c, int cx, int cy, int radius) {
+  c->drawCircle(cx, cy, radius, GRAY);
+  c->drawCircle(cx, cy, radius * 2 / 3, GRAY);
+  c->drawCircle(cx, cy, radius / 3, GRAY);
+  c->drawLine(cx - radius, cy, cx + radius, cy, GRAY);
+  c->drawLine(cx, cy - radius, cx, cy + radius, GRAY);
 
-  // N/S/E/W labels
-  tft->setTextSize(1);
-  tft->setTextColor(WHITE);
-  tft->setCursor(cx - 2, cy - radius - 9);
-  tft->print("N");
-  tft->setCursor(cx - 2, cy + radius + 2);
-  tft->print("S");
-  tft->setCursor(cx + radius + 3, cy - 3);
-  tft->print("E");
-  tft->setCursor(cx - radius - 8, cy - 3);
-  tft->print("W");
+  c->setTextSize(1);
+  c->setTextColor(WHITE);
+  c->setCursor(cx - 2, cy - radius - 9); c->print("N");
+  c->setCursor(cx - 2, cy + radius + 2); c->print("S");
+  c->setCursor(cx + radius + 3, cy - 3); c->print("E");
+  c->setCursor(cx - radius - 8, cy - 3); c->print("W");
 
-  // Plot each satellite
   for (int i = 0; i < satCount; i++) {
     if (!sats[i].active) continue;
-
-    // Convert azimuth/elevation to x/y
-    // elevation 90=center, 0=edge
     float r = (float)(90 - sats[i].elev) / 90.0 * radius;
-    // azimuth: 0=N(up), 90=E(right), measured clockwise
     float az = sats[i].azim * 3.14159 / 180.0;
     int sx = cx + (int)(r * sin(az));
     int sy = cy - (int)(r * cos(az));
 
-    // Color by signal strength
-    uint16_t color;
-    if (sats[i].snr == 0) color = GRAY;
-    else if (sats[i].snr < 20) color = RED;
-    else if (sats[i].snr < 35) color = YELLOW;
-    else color = GREEN;
-
-    tft->fillCircle(sx, sy, 3, color);
-
-    // PRN label
-    tft->setTextColor(WHITE);
-    tft->setTextSize(1);
-    tft->setCursor(sx + 4, sy - 3);
-    tft->print(sats[i].prn);
+    c->fillCircle(sx, sy, 3, snrColor(sats[i].snr));
+    c->setTextColor(WHITE);
+    c->setTextSize(1);
+    c->setCursor(sx + 4, sy - 3);
+    c->print(sats[i].prn);
   }
 }
 
-// Signal strength bar chart
-void drawSignalBars(int x, int y, int w, int h) {
+void drawSignalBars(Arduino_Canvas *c, int x, int y, int w, int h) {
   int barW = max(1, (w - 2) / max(1, satCount));
   int gap = 1;
-  if (barW > 3) { barW -= gap; } else { gap = 0; }
+  if (barW > 3) barW -= gap; else gap = 0;
 
   for (int i = 0; i < satCount && i * (barW + gap) < w; i++) {
     int barH = map(sats[i].snr, 0, 50, 0, h);
     barH = constrain(barH, 0, h);
-
-    uint16_t color;
-    if (sats[i].snr == 0) color = GRAY;
-    else if (sats[i].snr < 20) color = RED;
-    else if (sats[i].snr < 35) color = YELLOW;
-    else color = GREEN;
-
     int bx = x + i * (barW + gap);
     if (barH > 0)
-      tft->fillRect(bx, y + h - barH, barW, barH, color);
+      c->fillRect(bx, y + h - barH, barW, barH, snrColor(sats[i].snr));
   }
 }
 
-// Text info panel
-void drawInfoPanel(int x, int y) {
-  tft->setTextSize(1);
-  tft->setTextColor(WHITE);
+void drawInfoPanel(Arduino_Canvas *c, int x, int y) {
+  c->setTextSize(1);
 
-  // Time
-  tft->setCursor(x, y);
-  tft->print("UTC ");
-  tft->setTextColor(CYAN);
-  tft->print(timeStr);
+  c->setTextColor(WHITE); c->setCursor(x, y); c->print("UTC ");
+  c->setTextColor(CYAN); c->print(timeStr);
 
-  // Fix status
-  tft->setCursor(x, y + 12);
-  tft->setTextColor(WHITE);
-  tft->print("FIX ");
+  c->setCursor(x, y + 12); c->setTextColor(WHITE); c->print("FIX ");
+  if (fixQuality > 0) { c->setTextColor(GREEN); c->print("3D"); }
+  else { c->setTextColor(RED); c->print("NO"); }
+
+  c->setCursor(x, y + 24); c->setTextColor(WHITE); c->print("SAT ");
+  c->setTextColor(GREEN); c->print(satsInUse);
+  c->setTextColor(WHITE); c->print("/");
+  c->setTextColor(YELLOW); c->print(satsInView);
+
+  c->setCursor(x, y + 36); c->setTextColor(WHITE); c->print("HDP ");
+  if (hdop < 2.0) c->setTextColor(GREEN);
+  else if (hdop < 5.0) c->setTextColor(YELLOW);
+  else c->setTextColor(RED);
+  c->print(hdop, 1);
+
   if (fixQuality > 0) {
-    tft->setTextColor(GREEN);
-    tft->print("3D");
-  } else {
-    tft->setTextColor(RED);
-    tft->print("NO");
-  }
+    c->setCursor(x, y + 52); c->setTextColor(WHITE); c->print("LAT ");
+    c->setTextColor(CYAN); c->print(latStr); c->print(latDir);
 
-  // Satellite counts
-  tft->setCursor(x, y + 24);
-  tft->setTextColor(WHITE);
-  tft->print("SAT ");
-  tft->setTextColor(GREEN);
-  tft->print(satsInUse);
-  tft->setTextColor(WHITE);
-  tft->print("/");
-  tft->setTextColor(YELLOW);
-  tft->print(satsInView);
+    c->setCursor(x, y + 64); c->setTextColor(WHITE); c->print("LON ");
+    c->setTextColor(CYAN); c->print(lonStr); c->print(lonDir);
 
-  // HDOP
-  tft->setCursor(x, y + 36);
-  tft->setTextColor(WHITE);
-  tft->print("HDP ");
-  if (hdop < 2.0) tft->setTextColor(GREEN);
-  else if (hdop < 5.0) tft->setTextColor(YELLOW);
-  else tft->setTextColor(RED);
-  tft->print(hdop, 1);
-
-  // Coordinates
-  if (fixQuality > 0) {
-    tft->setCursor(x, y + 52);
-    tft->setTextColor(WHITE);
-    tft->print("LAT ");
-    tft->setTextColor(CYAN);
-    tft->print(latStr);
-    tft->print(latDir);
-
-    tft->setCursor(x, y + 64);
-    tft->setTextColor(WHITE);
-    tft->print("LON ");
-    tft->setTextColor(CYAN);
-    tft->print(lonStr);
-    tft->print(lonDir);
-
-    tft->setCursor(x, y + 76);
-    tft->setTextColor(WHITE);
-    tft->print("ALT ");
-    tft->setTextColor(CYAN);
-    tft->print(altStr);
-    tft->print("m");
+    c->setCursor(x, y + 76); c->setTextColor(WHITE); c->print("ALT ");
+    c->setTextColor(CYAN); c->print(altStr); c->print("m");
   }
 }
 
 unsigned long lastDraw = 0;
-int linesReceived = 0;
 
 void setup() {
   pinMode(TFT_BL, OUTPUT);
@@ -320,11 +228,7 @@ void setup() {
   tft->setRotation(1);
   tft->fillScreen(BLACK);
 
-  // Title
-  tft->setTextSize(1);
-  tft->setTextColor(CYAN);
-  tft->setCursor(70, 2);
-  tft->print("GPS SATELLITE TRACKER");
+  canvas->begin();
 }
 
 void loop() {
@@ -334,7 +238,6 @@ void loop() {
       if (linePos > 0) {
         lineBuf[linePos] = '\0';
         processLine(lineBuf);
-        linesReceived++;
         linePos = 0;
       }
     } else if (linePos < 127) {
@@ -342,29 +245,26 @@ void loop() {
     }
   }
 
-  // Redraw every 1 second
   if (millis() - lastDraw >= 1000) {
     lastDraw = millis();
 
-    // Clear main area (leave title)
-    tft->fillRect(0, 12, 240, 123, BLACK);
+    canvas->fillScreen(BLACK);
 
-    // Sky plot on the left (center at 60,72, radius 48)
-    drawSkyPlot(58, 72, 46);
+    // Title
+    canvas->setTextSize(1);
+    canvas->setTextColor(CYAN);
+    canvas->setCursor(55, 2);
+    canvas->print("GPS SATELLITE TRACKER");
 
-    // Info panel on the right
-    drawInfoPanel(125, 16);
+    // Sky plot
+    drawSkyPlot(canvas, 58, 72, 46);
 
-    // Signal bars at bottom right
-    drawSignalBars(125, 100, 110, 30);
+    // Info panel
+    drawInfoPanel(canvas, 125, 16);
 
-    // Data indicator bottom-left
-    tft->setTextSize(1);
-    tft->setTextColor(linesReceived > 0 ? GREEN : RED);
-    tft->setCursor(2, 126);
-    tft->print("NMEA:");
-    tft->print(linesReceived);
-    tft->print(" S:");
-    tft->print(satCount);
+    // Signal bars
+    drawSignalBars(canvas, 125, 100, 110, 30);
+
+    canvas->flush();
   }
 }
