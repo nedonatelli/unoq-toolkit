@@ -9,8 +9,11 @@ Requires: pip3 install Pillow
 """
 
 import base64
+import concurrent.futures
+import hashlib
 import io
 import math
+import os
 import socket
 import struct
 import threading
@@ -24,6 +27,7 @@ ZOOM = 17  # Street-level zoom
 TILE_SIZE = 256
 REFRESH_INTERVAL = 30  # seconds between map updates
 MOVE_THRESHOLD = 0.0001  # ~11m, minimum movement to trigger re-fetch
+TILE_CACHE_DIR = "/tmp/tile_cache"
 
 
 def mp_pack(obj):
@@ -137,6 +141,21 @@ class SimpleBridge:
             return result_box[0]
         return None
 
+    def fire(self, method, *params):
+        """Send RPC call without waiting for response (pipelined)."""
+        msgid = self._next_id()
+        request = [0, msgid, method, list(params)]
+        self._send(request)
+
+    def drain(self, timeout=10):
+        """Wait until all pending responses are received or timeout."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self.pending_lock:
+                if not self.pending:
+                    return
+            time.sleep(0.01)
+
     def _next_id(self):
         self.next_msgid += 1; return self.next_msgid
 
@@ -171,71 +190,85 @@ def latlon_to_tile(lat, lon, zoom):
 
 
 def fetch_esri_tile(tx, ty, zoom):
-    """Fetch a single Esri World Imagery tile."""
+    """Fetch a single Esri World Imagery tile, with disk caching."""
+    os.makedirs(TILE_CACHE_DIR, exist_ok=True)
+    cache_path = os.path.join(TILE_CACHE_DIR, f"{zoom}_{tx}_{ty}.jpg")
+    if os.path.exists(cache_path):
+        with open(cache_path, 'rb') as f:
+            return f.read()
     url = f"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{zoom}/{ty}/{tx}"
     req = urllib.request.Request(url, headers={"User-Agent": "UNO-Q-GPS/1.0"})
     with urllib.request.urlopen(req, timeout=15) as resp:
-        return resp.read()
+        data = resp.read()
+    with open(cache_path, 'wb') as f:
+        f.write(data)
+    return data
 
 
 def fetch_map_image(lat, lon, zoom):
-    """Fetch satellite imagery centered on lat/lon, return PIL Image sized to TFT."""
+    """Fetch satellite imagery centered on lat/lon, return PIL Image sized to TFT.
+    Downloads tiles in parallel with caching."""
     from PIL import Image
 
-    # Calculate center tile and pixel offset
     x_float, y_float = latlon_to_tile(lat, lon, zoom)
     tx_center = int(x_float)
     ty_center = int(y_float)
     px_in_tile = int((x_float - tx_center) * TILE_SIZE)
     py_in_tile = int((y_float - ty_center) * TILE_SIZE)
 
-    # We need enough tiles to cover 240x135 around the center point
-    # Fetch a 3x3 grid of tiles to ensure coverage
-    big = Image.new("RGB", (TILE_SIZE * 3, TILE_SIZE * 3))
-    for dy in range(-1, 2):
-        for dx in range(-1, 2):
+    # Fetch 3x3 grid of tiles in parallel
+    tile_coords = [(tx_center + dx, ty_center + dy, dx, dy)
+                   for dy in range(-1, 2) for dx in range(-1, 2)]
+    tiles = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=9) as pool:
+        futures = {pool.submit(fetch_esri_tile, tx, ty, zoom): (tx, ty, dx, dy)
+                   for tx, ty, dx, dy in tile_coords}
+        for fut in concurrent.futures.as_completed(futures):
+            tx, ty, dx, dy = futures[fut]
             try:
-                data = fetch_esri_tile(tx_center + dx, ty_center + dy, zoom)
-                tile = Image.open(io.BytesIO(data))
-                big.paste(tile, ((dx + 1) * TILE_SIZE, (dy + 1) * TILE_SIZE))
+                tiles[(dx, dy)] = fut.result()
             except Exception as e:
-                print(f"  Tile ({tx_center+dx},{ty_center+dy}) failed: {e}")
+                print(f"  Tile ({tx},{ty}) failed: {e}")
 
-    # Crop 240x135 centered on the GPS point, then downscale to 80x45
-    cx = TILE_SIZE + px_in_tile  # center x in the big image
-    cy = TILE_SIZE + py_in_tile  # center y in the big image
+    big = Image.new("RGB", (TILE_SIZE * 3, TILE_SIZE * 3))
+    for (dx, dy), data in tiles.items():
+        tile = Image.open(io.BytesIO(data))
+        big.paste(tile, ((dx + 1) * TILE_SIZE, (dy + 1) * TILE_SIZE))
+
+    cx = TILE_SIZE + px_in_tile
+    cy = TILE_SIZE + py_in_tile
     left = cx - TFT_W // 2
     top = cy - TFT_H // 2
     return big.crop((left, top, left + TFT_W, top + TFT_H))
 
 
-def image_to_b64_rows(img):
-    """Convert a PIL Image to list of base64-encoded RGB565 byte strings, one per row."""
+CHUNK_PX = 72  # pixels per RPC call (~72*2=144 bytes -> 192 b64 chars + prefix < 205)
+
+def image_to_rgb565_raw(img):
+    """Convert PIL Image to raw RGB565 bytes per row (no base64 yet)."""
     rows = []
     for y in range(img.height):
-        raw = bytearray()
+        raw = bytearray(img.width * 2)
         for x in range(img.width):
             r, g, b = img.getpixel((x, y))
             rgb565 = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
-            raw.append(rgb565 >> 8)
-            raw.append(rgb565 & 0xFF)
-        rows.append(base64.b64encode(raw).decode('ascii'))
+            raw[x * 2] = rgb565 >> 8
+            raw[x * 2 + 1] = rgb565 & 0xFF
+        rows.append(raw)
     return rows
 
 
-CHUNK_PX = 72  # pixels per RPC call (~72*2=144 bytes -> 192 b64 chars + prefix < 205)
-
-def push_image(bridge, rows):
-    """Push 240x135 image to TFT in chunks via Bridge RPC."""
-    for y, b64_data in enumerate(rows):
-        raw = base64.b64decode(b64_data)
+def push_image(bridge, raw_rows):
+    """Push 240x135 image to TFT via pipelined Bridge RPC. Base64-encodes each chunk directly."""
+    for y, raw in enumerate(raw_rows):
         for x in range(0, IMG_W, CHUNK_PX):
             end_px = min(x + CHUNK_PX, IMG_W)
             chunk_b64 = base64.b64encode(raw[x*2:end_px*2]).decode('ascii')
-            param = f"{y},{x},{chunk_b64}"
-            bridge.call("set_row", param, timeout=5)
+            bridge.fire("set_row", f"{y},{x},{chunk_b64}")
         if y % 20 == 0:
-            print(f"  Row {y}/{len(rows)}...", flush=True)
+            print(f"  Row {y}/{len(raw_rows)}...", flush=True)
+    # Wait for MCU to finish processing all queued calls
+    bridge.drain(timeout=30)
 
 
 def main():
@@ -303,13 +336,16 @@ def main():
                 time.sleep(10)
                 continue
 
-            # Convert to RGB565 base64
+            # Convert to RGB565 raw bytes
             print("  Converting to RGB565...")
-            rows = image_to_b64_rows(img)
+            raw_rows = image_to_rgb565_raw(img)
 
-            # Push directly (no clear — overwrite in place to avoid blank flash)
+            # Clear screen on first image, then overwrite in place
+            if last_lat is None:
+                bridge.call("clear", "", timeout=5)
+                time.sleep(0.5)
             print("  Pushing to display...")
-            push_image(bridge, rows)
+            push_image(bridge, raw_rows)
             print("  Done!")
 
             last_lat, last_lon = lat, lon
