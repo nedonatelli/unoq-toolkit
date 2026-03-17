@@ -35,13 +35,16 @@ $ADB shell "python3 /tmp/clock.py"
 ### Host-side (macOS)
 
 - **gui.py** — Tkinter GUI for designing LED patterns. Contains shape/animation presets and live sketches in `SHAPES`, `ANIMATIONS`, and `LIVE_SKETCHES` dicts. Generates `.ino` files into `blink/blink.ino` and compiles/uploads via `arduino-cli` in a background thread.
+- **upload.py** — Interactive sketch launcher. Lists all `.ino` sketches, compiles and uploads the selected one. Skips `blink/` (auto-generated scratch).
 - **wifi_scan.py** — Scans WiFi via ADB, generates a static sketch with signal bars, compiles and uploads each cycle.
 
 ### Board-side (Linux on UNO Q)
 
 - **board/clock.py** — Renders HH:MM with blinking colon using a 3x5 pixel font, pushes frames via Bridge RPC every 0.5s.
 - **board/wifi_monitor.py** — Scans WiFi via `nmcli`, builds bar chart frames, pushes via Bridge RPC every 1s.
-- Both use `SimpleBridge` class connecting to `/var/run/arduino-router.sock` (Unix domain socket).
+- **board/gps_map.py** — Fetches Esri satellite imagery centered on GPS position, encodes as JPEG, pushes to MCU for TFT rendering. Parallel tile downloads with disk caching.
+- **board/gps_map_sim.py** — Simulated walking mode for gps_map. Walks a circular path (~220m radius) to test map updates without GPS fix.
+- All use `SimpleBridge` class connecting to `/var/run/arduino-router.sock` (Unix domain socket).
 
 ### MCU sketches
 
@@ -49,6 +52,10 @@ $ADB shell "python3 /tmp/clock.py"
 - **rpc_receiver/** — Bridge RPC receiver sketch. Registers `set_frame()` method so Linux-side scripts can push frames.
 - **joystick/** — Joystick-controlled 2x2 square on the LED matrix. VRX→A1, VRY→A0 with auto-calibration.
 - **runner/** — Side-scroller jump game on the LED matrix with joystick input.
+- **gps_test/** — GPS connection test with auto baud rate detection (cycles 9600, 38400, 115200). Shows receive status on LED matrix.
+- **gps_sats/** — GPS satellite tracker on LED matrix. Bar graphs for satellites in use/view, fix status indicator.
+- **gps_tft/** — GPS satellite dashboard on TFT. Sky plot, signal bars, coordinates, altitude, HDOP. Full-screen canvas for flicker-free rendering.
+- **gps_map/** — GPS satellite map display on TFT. Linux side fetches Esri World Imagery tiles, encodes as JPEG, sends to MCU via Bridge RPC. MCU decodes JPEG with tjpgd and renders directly to TFT at 60MHz SPI. ~2s per frame.
 - **tft_hwspi/** — Spinning 3D wireframe cube on TFT display. Hardware SPI at 60MHz, fixed-point math, partial canvas (160x120). Requires `Arduino_ST7789.cpp` SPI_MODE0 patch.
 - **tft_swspi/** — Same spinning cube using software SPI. No library patch needed, but slower (longer lines = lower FPS).
 
@@ -114,6 +121,50 @@ Change `SPI_MODE2` → `SPI_MODE0` in the `begin()` method. Reinstalling the lib
 - Full-screen framebuffer (240x135, 64KB) is too slow even with HW SPI. Use a partial canvas (160x120) centered on the render area.
 - Fixed-point math (10-bit, 256-entry sine LUT) eliminates all floating-point from the render loop.
 - SW SPI works without patches but is ~10-50x slower — use only as a fallback.
+
+## GPS Module (QUESCAN AN252 M10)
+
+u-blox M10 chipset, connected to MCU via Serial (USART1) at **115200 baud** (not the default 9600). Outputs NMEA sentences (GGA, GSV, etc.) even without satellite fix.
+
+Wiring: GPS TX → D0 (RX), GPS RX → D1 (TX), VCC → 3.3V, GND → GND.
+
+GPS and Bridge operate on independent serial ports: GPS uses `Serial` (USART1) while Bridge uses `Serial1` (LPUART1 via arduino-router).
+
+## GPS Map Architecture
+
+The GPS map display (`gps_map/` + `board/gps_map.py`) uses a split architecture to work around the 115200 baud Bridge serial bottleneck:
+
+1. **Linux side** fetches Esri World Imagery tiles (256×256 JPEG, ~15-25KB each), crops to 240×135, re-encodes as JPEG (~13KB at quality 85)
+2. **Linux→MCU transfer** sends JPEG in 500-byte chunks via `load_jpg` RPC (~28 calls)
+3. **MCU side** decodes JPEG using tjpgd (Tiny JPEG Decoder) and writes RGB565 pixels directly to TFT at 60MHz HW SPI
+
+This achieves **~2 second** full-frame updates vs ~7.6s with raw pixel transfer.
+
+### RPC methods (gps_map sketch)
+
+| Method | Parameters | Description |
+|--------|-----------|-------------|
+| `get_gps` | `String ""` | Returns `"lat,lon"` or `"nofix"` |
+| `set_row` | `int row, bin data` | Write raw RGB565 row (fallback) |
+| `load_jpg` | `int offset, bin chunk` | Buffer JPEG data at offset |
+| `render_jpg` | `String ""` | Decode buffered JPEG → TFT |
+| `clear` | `String ""` | Fill TFT black |
+
+### Key limits
+
+- **RPC message size**: 1024 bytes max (patched `Arduino_RPClite` `DEFAULT_RPC_BUFFER_SIZE` from 256 to 1024)
+- **RPC parameter string**: ~950 bytes max before timeout
+- **JPEG chunk size**: 500 bytes reliable (917 byte total message)
+- **Bridge serial**: 115200 baud (LPUART1), higher rates failed
+- **Tile cache**: `/tmp/tile_cache/` on Linux side, survives across script runs but not reboots
+
+### RPClite buffer patch
+
+The default `DEFAULT_RPC_BUFFER_SIZE` of 256 bytes severely limits RPC payload size. Patch to 1024:
+```
+~/Documents/Arduino/libraries/Arduino_RPClite/src/request.h
+```
+Change `#define DEFAULT_RPC_BUFFER_SIZE (DECODER_BUFFER_SIZE / 4)` → `#define DEFAULT_RPC_BUFFER_SIZE DECODER_BUFFER_SIZE`. Reinstalling the library will overwrite this patch.
 
 ## Board Quirks
 
