@@ -4,7 +4,7 @@
 //
 // Bridge RPC methods:
 //   get_gps  -> returns "lat,lon" in decimal degrees, or "nofix"
-//   set_row  -> receives "row,col,base64data" (native 240x135 pixels)
+//   set_row  -> receives (int row, bin raw_rgb565) — native 240x135 pixels
 //   clear    -> fills TFT black
 //
 // Run board/gps_map.py on the Linux side to fetch and push map tiles.
@@ -36,33 +36,6 @@ char latDirRaw = 'N', lonDirRaw = 'W';
 
 // Pixel buffer for native 240x135 display
 uint16_t rowBuf[240];
-uint8_t b64dec[480];  // base64 decode buffer (max 480 bytes for 240 pixels)
-
-// Base64 decode table: maps ASCII char to 6-bit value
-static const int8_t b64val[128] = {
-  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63,
-  52,53,54,55,56,57,58,59,60,61,-1,-1,-1, 0,-1,-1,
-  -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,
-  15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,-1,
-  -1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
-  41,42,43,44,45,46,47,48,49,50,51,-1,-1,-1,-1,-1
-};
-
-int base64_decode(const char *src, int srcLen, uint8_t *dst) {
-  int j = 0;
-  for (int i = 0; i + 3 < srcLen; i += 4) {
-    uint32_t n = ((uint32_t)b64val[(uint8_t)src[i]] << 18) |
-                 ((uint32_t)b64val[(uint8_t)src[i+1]] << 12) |
-                 ((uint32_t)b64val[(uint8_t)src[i+2]] << 6) |
-                 (uint32_t)b64val[(uint8_t)src[i+3]];
-    dst[j++] = (n >> 16) & 0xFF;
-    if (src[i+2] != '=') dst[j++] = (n >> 8) & 0xFF;
-    if (src[i+3] != '=') dst[j++] = n & 0xFF;
-  }
-  return j;
-}
 
 float nmeaToDecimal(const char* nmea, char dir) {
   float val = atof(nmea);
@@ -139,31 +112,17 @@ String get_gps(String param) {
   return String(buf);
 }
 
-String set_row(String param) {
-  // Format: "row,col,base64data"
-  // row = y (0-134), col = x (0-239), native 240x135 pixels
-  // base64 encodes RGB565 pixels (2 bytes each, big-endian)
-  int comma1 = param.indexOf(',');
-  if (comma1 < 0) return String("err");
-  int comma2 = param.indexOf(',', comma1 + 1);
-  if (comma2 < 0) return String("err");
-
-  int row = param.substring(0, comma1).toInt();
-  int col = param.substring(comma1 + 1, comma2).toInt();
-  if (row < 0 || row > 134 || col < 0 || col > 239) return String("err");
-
-  // Decode base64 into raw bytes
-  int b64Start = comma2 + 1;
-  int b64Len = param.length() - b64Start;
-  int rawBytes = base64_decode(param.c_str() + b64Start, b64Len, b64dec);
-  int pixels = rawBytes / 2;  // 2 bytes per RGB565 pixel
-  if (pixels > 240 - col) pixels = 240 - col;
+String set_row(int row, MsgPack::bin_t<uint8_t> data) {
+  // Raw RGB565 pixels (2 bytes each, big-endian), drawn at row y
+  if (row < 0 || row > 134) return String("err");
+  int pixels = data.size() / 2;
+  if (pixels > 240) pixels = 240;
 
   for (int p = 0; p < pixels; p++) {
-    rowBuf[p] = ((uint16_t)b64dec[p * 2] << 8) | b64dec[p * 2 + 1];
+    rowBuf[p] = ((uint16_t)data[p * 2] << 8) | data[p * 2 + 1];
   }
 
-  tft->draw16bitRGBBitmap(col, row, rowBuf, pixels, 1);
+  tft->draw16bitRGBBitmap(0, row, rowBuf, pixels, 1);
   return String("ok");
 }
 

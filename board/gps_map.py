@@ -55,6 +55,11 @@ def mp_pack(obj):
         elif l <= 0xffff: header = b'\xdc' + struct.pack('>H', l)
         else: header = b'\xdd' + struct.pack('>I', l)
         return header + b''.join(mp_pack(item) for item in obj)
+    elif isinstance(obj, bytes):
+        l = len(obj)
+        if l <= 0xff: return b'\xc4' + struct.pack('B', l) + obj
+        elif l <= 0xffff: return b'\xc5' + struct.pack('>H', l) + obj
+        else: return b'\xc6' + struct.pack('>I', l) + obj
     elif isinstance(obj, float): return b'\xcb' + struct.pack('>d', obj)
     else: raise TypeError(f"Cannot pack {type(obj)}")
 
@@ -242,10 +247,8 @@ def fetch_map_image(lat, lon, zoom):
     return big.crop((left, top, left + TFT_W, top + TFT_H))
 
 
-CHUNK_PX = 72  # pixels per RPC call (~72*2=144 bytes -> 192 b64 chars + prefix < 205)
-
 def image_to_rgb565_raw(img):
-    """Convert PIL Image to raw RGB565 bytes per row (no base64 yet)."""
+    """Convert PIL Image to raw RGB565 bytes per row."""
     rows = []
     for y in range(img.height):
         raw = bytearray(img.width * 2)
@@ -259,16 +262,11 @@ def image_to_rgb565_raw(img):
 
 
 def push_image(bridge, raw_rows):
-    """Push 240x135 image to TFT via pipelined Bridge RPC. Base64-encodes each chunk directly."""
+    """Push 240x135 image to TFT via Bridge RPC. One call per row (raw binary)."""
     for y, raw in enumerate(raw_rows):
-        for x in range(0, IMG_W, CHUNK_PX):
-            end_px = min(x + CHUNK_PX, IMG_W)
-            chunk_b64 = base64.b64encode(raw[x*2:end_px*2]).decode('ascii')
-            bridge.fire("set_row", f"{y},{x},{chunk_b64}")
+        bridge.call("set_row", y, bytes(raw), timeout=5)
         if y % 20 == 0:
             print(f"  Row {y}/{len(raw_rows)}...", flush=True)
-    # Wait for MCU to finish processing all queued calls
-    bridge.drain(timeout=30)
 
 
 def main():
