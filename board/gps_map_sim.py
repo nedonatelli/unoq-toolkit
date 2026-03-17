@@ -149,6 +149,25 @@ class SimpleBridge:
             return result_box[0]
         return None
 
+    def fire(self, method, *params):
+        """Send RPC call without waiting for response (pipelined)."""
+        msgid = self._next_id()
+        request = [0, msgid, method, list(params)]
+        event = threading.Event()
+        result_box = [None, None]
+        with self.pending_lock:
+            self.pending[msgid] = (event, result_box)
+        self._send(request)
+
+    def drain(self, timeout=10):
+        """Wait until all pending responses are received or timeout."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self.pending_lock:
+                if not self.pending:
+                    return
+            time.sleep(0.01)
+
     def _next_id(self):
         self.next_msgid += 1; return self.next_msgid
 
@@ -231,23 +250,44 @@ def fetch_map_image(lat, lon, zoom):
 
 
 def image_to_rgb565_raw(img):
+    """Convert PIL Image to raw RGB565 bytes per row using bulk struct.pack."""
+    pixels = img.tobytes()  # RGBRGBRGB... flat bytes
     rows = []
+    w = img.width
     for y in range(img.height):
-        raw = bytearray(img.width * 2)
-        for x in range(img.width):
-            r, g, b = img.getpixel((x, y))
+        raw = bytearray(w * 2)
+        off = y * w * 3
+        for x in range(w):
+            p = off + x * 3
+            r, g, b = pixels[p], pixels[p + 1], pixels[p + 2]
             rgb565 = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
             raw[x * 2] = rgb565 >> 8
             raw[x * 2 + 1] = rgb565 & 0xFF
-        rows.append(raw)
+        rows.append(bytes(raw))
     return rows
 
 
-def push_image(bridge, raw_rows):
+def push_image(bridge, raw_rows, prev_rows=None):
+    """Push image with delta detection. Only sends rows that changed.
+    Returns the rows sent (for use as prev_rows next frame)."""
+    changed = []
     for y, raw in enumerate(raw_rows):
-        bridge.call("set_row", y, bytes(raw), timeout=5)
-        if y % 20 == 0:
-            print(f"  Row {y}/{len(raw_rows)}...", flush=True)
+        if prev_rows is None or y >= len(prev_rows) or raw != prev_rows[y]:
+            changed.append(y)
+
+    total = len(changed)
+    if total == 0:
+        print(f"  No rows changed, skipping push", flush=True)
+        return raw_rows
+
+    print(f"  {total}/{len(raw_rows)} rows changed", flush=True)
+
+    for i, y in enumerate(changed):
+        bridge.call("set_row", y, raw_rows[y], timeout=5)
+        if i % 20 == 0:
+            print(f"  Row {i}/{total}...", flush=True)
+
+    return raw_rows
 
 
 def main():
@@ -277,6 +317,7 @@ def main():
     time.sleep(0.5)
 
     step = 0
+    prev_rows = None
     while True:
         try:
             angle = math.radians(step * SIM_STEP_DEG)
@@ -286,6 +327,7 @@ def main():
 
             print(f"Step {step}: {lat:.6f}, {lon:.6f} ({step * SIM_STEP_DEG % 360} deg)")
 
+            t0 = time.monotonic()
             print("  Fetching tiles...")
             try:
                 img = fetch_map_image(lat, lon, ZOOM)
@@ -298,8 +340,9 @@ def main():
             raw_rows = image_to_rgb565_raw(img)
 
             print("  Pushing...")
-            push_image(bridge, raw_rows)
-            print("  Done!")
+            prev_rows = push_image(bridge, raw_rows, prev_rows)
+            elapsed = time.monotonic() - t0
+            print(f"  Done! ({elapsed:.1f}s)")
 
             time.sleep(SIM_INTERVAL)
 

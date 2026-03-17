@@ -4,7 +4,7 @@
 //
 // Bridge RPC methods:
 //   get_gps  -> returns "lat,lon" in decimal degrees, or "nofix"
-//   set_row  -> receives (int row, bin raw_rgb565) — native 240x135 pixels
+//   set_row  -> receives (int row, bin raw_rgb565) — full 240px row
 //   clear    -> fills TFT black
 //
 // Run board/gps_map.py on the Linux side to fetch and push map tiles.
