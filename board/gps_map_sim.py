@@ -249,45 +249,33 @@ def fetch_map_image(lat, lon, zoom):
     return big.crop((left, top, left + TFT_W, top + TFT_H))
 
 
-def image_to_rgb565_raw(img):
-    """Convert PIL Image to raw RGB565 bytes per row using bulk struct.pack."""
-    pixels = img.tobytes()  # RGBRGBRGB... flat bytes
-    rows = []
-    w = img.width
-    for y in range(img.height):
-        raw = bytearray(w * 2)
-        off = y * w * 3
-        for x in range(w):
-            p = off + x * 3
-            r, g, b = pixels[p], pixels[p + 1], pixels[p + 2]
-            rgb565 = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
-            raw[x * 2] = rgb565 >> 8
-            raw[x * 2 + 1] = rgb565 & 0xFF
-        rows.append(bytes(raw))
-    return rows
+CHUNK_SIZE = 500  # bytes per load_jpg call (reliable at this size)
 
 
-def push_image(bridge, raw_rows, prev_rows=None):
-    """Push image with delta detection. Only sends rows that changed.
-    Returns the rows sent (for use as prev_rows next frame)."""
-    changed = []
-    for y, raw in enumerate(raw_rows):
-        if prev_rows is None or y >= len(prev_rows) or raw != prev_rows[y]:
-            changed.append(y)
+def push_image_jpg(bridge, img):
+    """Encode image as JPEG, send to MCU, decode and render on TFT."""
+    # Encode as JPEG
+    buf = io.BytesIO()
+    img.save(buf, format='JPEG', quality=85)
+    jpg_data = buf.getvalue()
+    jpg_size = len(jpg_data)
+    print(f"  JPEG: {jpg_size} bytes ({jpg_size/1024:.1f}KB)", flush=True)
 
-    total = len(changed)
-    if total == 0:
-        print(f"  No rows changed, skipping push", flush=True)
-        return raw_rows
+    # Send in chunks
+    chunks = 0
+    for offset in range(0, jpg_size, CHUNK_SIZE):
+        chunk = jpg_data[offset:offset + CHUNK_SIZE]
+        result = bridge.call("load_jpg", offset, chunk, timeout=5)
+        if result != "ok":
+            print(f"  load_jpg error at offset {offset}: {result}", flush=True)
+            return
+        chunks += 1
 
-    print(f"  {total}/{len(raw_rows)} rows changed", flush=True)
+    print(f"  Sent {chunks} chunks, rendering...", flush=True)
 
-    for i, y in enumerate(changed):
-        bridge.call("set_row", y, raw_rows[y], timeout=5)
-        if i % 20 == 0:
-            print(f"  Row {i}/{total}...", flush=True)
-
-    return raw_rows
+    # Trigger decode + render on MCU
+    result = bridge.call("render_jpg", "", timeout=10)
+    print(f"  render_jpg: {result}", flush=True)
 
 
 def main():
@@ -317,7 +305,6 @@ def main():
     time.sleep(0.5)
 
     step = 0
-    prev_rows = None
     while True:
         try:
             angle = math.radians(step * SIM_STEP_DEG)
@@ -336,11 +323,8 @@ def main():
                 time.sleep(5)
                 continue
 
-            print("  Converting...")
-            raw_rows = image_to_rgb565_raw(img)
-
-            print("  Pushing...")
-            prev_rows = push_image(bridge, raw_rows, prev_rows)
+            print("  Pushing JPEG...")
+            push_image_jpg(bridge, img)
             elapsed = time.monotonic() - t0
             print(f"  Done! ({elapsed:.1f}s)")
 

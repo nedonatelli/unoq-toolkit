@@ -247,26 +247,26 @@ def fetch_map_image(lat, lon, zoom):
     return big.crop((left, top, left + TFT_W, top + TFT_H))
 
 
-def image_to_rgb565_raw(img):
-    """Convert PIL Image to raw RGB565 bytes per row."""
-    rows = []
-    for y in range(img.height):
-        raw = bytearray(img.width * 2)
-        for x in range(img.width):
-            r, g, b = img.getpixel((x, y))
-            rgb565 = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
-            raw[x * 2] = rgb565 >> 8
-            raw[x * 2 + 1] = rgb565 & 0xFF
-        rows.append(raw)
-    return rows
+CHUNK_SIZE = 500  # bytes per load_jpg call
 
 
-def push_image(bridge, raw_rows):
-    """Push 240x135 image to TFT via Bridge RPC. One call per row (raw binary)."""
-    for y, raw in enumerate(raw_rows):
-        bridge.call("set_row", y, bytes(raw), timeout=5)
-        if y % 20 == 0:
-            print(f"  Row {y}/{len(raw_rows)}...", flush=True)
+def push_image_jpg(bridge, img):
+    """Encode image as JPEG, send to MCU, decode and render on TFT."""
+    buf = io.BytesIO()
+    img.save(buf, format='JPEG', quality=85)
+    jpg_data = buf.getvalue()
+    print(f"  JPEG: {len(jpg_data)} bytes ({len(jpg_data)/1024:.1f}KB)", flush=True)
+
+    for offset in range(0, len(jpg_data), CHUNK_SIZE):
+        chunk = jpg_data[offset:offset + CHUNK_SIZE]
+        result = bridge.call("load_jpg", offset, chunk, timeout=5)
+        if result != "ok":
+            print(f"  load_jpg error at offset {offset}: {result}", flush=True)
+            return
+
+    result = bridge.call("render_jpg", "", timeout=10)
+    if result != "ok":
+        print(f"  render_jpg error: {result}", flush=True)
 
 
 def main():
@@ -334,16 +334,12 @@ def main():
                 time.sleep(10)
                 continue
 
-            # Convert to RGB565 raw bytes
-            print("  Converting to RGB565...")
-            raw_rows = image_to_rgb565_raw(img)
-
             # Clear screen on first image, then overwrite in place
             if last_lat is None:
                 bridge.call("clear", "", timeout=5)
                 time.sleep(0.5)
             print("  Pushing to display...")
-            push_image(bridge, raw_rows)
+            push_image_jpg(bridge, img)
             print("  Done!")
 
             last_lat, last_lon = lat, lon

@@ -3,14 +3,20 @@
 // u-blox M10 at 115200 baud
 //
 // Bridge RPC methods:
-//   get_gps  -> returns "lat,lon" in decimal degrees, or "nofix"
-//   set_row  -> receives (int row, bin raw_rgb565) — full 240px row
-//   clear    -> fills TFT black
+//   get_gps   -> returns "lat,lon" in decimal degrees, or "nofix"
+//   set_row   -> receives (int row, bin raw_rgb565) — full 240px row
+//   load_jpg  -> receives (int offset, bin chunk) — buffer JPEG data
+//   render_jpg -> decodes buffered JPEG and draws to TFT
+//   clear     -> fills TFT black
 //
 // Run board/gps_map.py on the Linux side to fetch and push map tiles.
 #include <Arduino_GFX_Library.h>
 #include <Arduino_RouterBridge.h>
 #include <SPI.h>
+
+extern "C" {
+#include "tjpgd.h"
+}
 
 #define BLACK   0x0000
 #define WHITE   0xFFFF
@@ -36,6 +42,51 @@ char latDirRaw = 'N', lonDirRaw = 'W';
 
 // Pixel buffer for native 240x135 display
 uint16_t rowBuf[240];
+
+// JPEG decoder state
+#define JPG_BUF_SIZE 16384  // 16KB buffer for incoming JPEG data
+uint8_t jpgBuf[JPG_BUF_SIZE];
+int jpgLen = 0;  // Current JPEG data length
+
+// tjpgd read position (used by input callback)
+int jpgReadPos = 0;
+
+// tjpgd input callback: reads from jpgBuf
+size_t jpg_input(JDEC *jd, uint8_t *buf, size_t len) {
+  int remain = jpgLen - jpgReadPos;
+  if ((int)len > remain) len = remain;
+  if (buf) memcpy(buf, jpgBuf + jpgReadPos, len);
+  jpgReadPos += len;
+  return len;
+}
+
+// tjpgd output callback: writes decoded RGB565 blocks directly to TFT
+int jpg_output(JDEC *jd, void *bitmap, JRECT *rect) {
+  uint16_t *pixels = (uint16_t *)bitmap;
+  int w = rect->right - rect->left + 1;
+  int h = rect->bottom - rect->top + 1;
+
+  // Clip to display bounds
+  if (rect->left >= 240 || rect->top >= 135) return 1;
+  int drawW = w;
+  int drawH = h;
+  if (rect->left + drawW > 240) drawW = 240 - rect->left;
+  if (rect->top + drawH > 135) drawH = 135 - rect->top;
+
+  // Write each row of the MCU block to the TFT
+  for (int row = 0; row < drawH; row++) {
+    // Byte-swap RGB565: tjpgd outputs little-endian, TFT expects big-endian
+    for (int col = 0; col < drawW; col++) {
+      uint16_t px = pixels[row * w + col];
+      rowBuf[col] = (px >> 8) | (px << 8);
+    }
+    tft->draw16bitRGBBitmap(rect->left, rect->top + row, rowBuf, drawW, 1);
+  }
+  return 1;  // Continue decoding
+}
+
+// Work area for tjpgd (3.5KB for FASTDECODE=1)
+uint8_t jpgWork[TJPGD_WORKSPACE_SIZE];
 
 float nmeaToDecimal(const char* nmea, char dir) {
   float val = atof(nmea);
@@ -126,6 +177,35 @@ String set_row(int row, MsgPack::bin_t<uint8_t> data) {
   return String("ok");
 }
 
+String load_jpg(int offset, MsgPack::bin_t<uint8_t> chunk) {
+  // Buffer JPEG data at the given offset
+  if (offset == 0) jpgLen = 0;  // Reset on first chunk
+  int len = chunk.size();
+  if (offset + len > JPG_BUF_SIZE) return String("full");
+  memcpy(jpgBuf + offset, chunk.data(), len);
+  if (offset + len > jpgLen) jpgLen = offset + len;
+  return String("ok");
+}
+
+String render_jpg(String param) {
+  // Decode the buffered JPEG and draw to TFT
+  if (jpgLen == 0) return String("empty");
+
+  JDEC jdec;
+  jpgReadPos = 0;
+  JRESULT res = jd_prepare(&jdec, jpg_input, jpgWork, sizeof(jpgWork), nullptr);
+  if (res != JDR_OK) {
+    return String("prep:") + String((int)res);
+  }
+
+  res = jd_decomp(&jdec, jpg_output, 0);
+  if (res != JDR_OK) {
+    return String("dec:") + String((int)res);
+  }
+
+  return String("ok");
+}
+
 String clear_screen(String param) {
   tft->fillScreen(BLACK);
   return String("ok");
@@ -166,15 +246,20 @@ void setup() {
 
   bool p1 = Bridge.provide("get_gps", get_gps);
   bool p2 = Bridge.provide("set_row", set_row);
-  bool p3 = Bridge.provide("clear", clear_screen);
+  bool p3 = Bridge.provide("load_jpg", load_jpg);
+  bool p4 = Bridge.provide("render_jpg", render_jpg);
+  bool p5 = Bridge.provide("clear", clear_screen);
 
   tft->fillRect(0, 85, 240, 10, BLACK);
   tft->setCursor(5, 85);
   tft->setTextColor(GREEN);
   tft->print("RPC: ");
-  tft->print(p1 ? "gps:OK " : "gps:FAIL ");
-  tft->print(p2 ? "row:OK " : "row:FAIL ");
-  tft->print(p3 ? "clr:OK" : "clr:FAIL");
+  tft->print((p1 && p2 && p3 && p4 && p5) ? "ALL OK" : "FAIL");
+  if (!p1) tft->print(" !gps");
+  if (!p2) tft->print(" !row");
+  if (!p3) tft->print(" !jpg");
+  if (!p4) tft->print(" !rnd");
+  if (!p5) tft->print(" !clr");
 }
 
 bool mapReceived = false;
