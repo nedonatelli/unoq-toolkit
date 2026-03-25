@@ -25,7 +25,7 @@ String set_frame(String frameStr) {
 
 void setup() {
   matrix.begin();
-  Bridge.begin();
+  Bridge.begin(460800);
   Bridge.provide("set_frame", set_frame);
 }
 
