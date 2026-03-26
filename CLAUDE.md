@@ -44,6 +44,9 @@ $ADB shell "python3 /tmp/clock.py"
 - **board/wifi_monitor.py** — Scans WiFi via `nmcli`, builds bar chart frames, pushes via Bridge RPC every 1s.
 - **board/gps_map.py** — Fetches Esri satellite imagery centered on GPS position, encodes as JPEG, pushes to MCU for TFT rendering. Parallel tile downloads with disk caching.
 - **board/gps_map_sim.py** — Simulated walking mode for gps_map. Walks a circular path (~220m radius) to test map updates without GPS fix.
+- **board/oled_stats.py** — Gathers CPU temp, memory, uptime, and IP address, pushes to MCU for OLED display every 2s.
+- **board/tft_term.py** — Runs shell commands and sends output to MCU for TFT terminal display. Demo mode cycles through system info commands.
+- **board/tft_weather.py** — Fetches weather from Open-Meteo API (no key needed) for Washington, D.C., pushes to MCU for TFT display. Updates every 5 minutes.
 - All use `SimpleBridge` class connecting to `/var/run/arduino-router.sock` (Unix domain socket).
 
 ### MCU sketches
@@ -58,6 +61,9 @@ $ADB shell "python3 /tmp/clock.py"
 - **gps_map/** — GPS satellite map display on TFT. Linux side fetches Esri World Imagery tiles, encodes as JPEG, sends to MCU via Bridge RPC. MCU decodes JPEG with tjpgd and renders directly to TFT at 60MHz SPI. ~2s per frame.
 - **tft_hwspi/** — Spinning 3D wireframe cube on TFT display. Hardware SPI at 60MHz, fixed-point math, partial canvas (160x120). Requires `Arduino_ST7789.cpp` SPI_MODE0 patch.
 - **tft_swspi/** — Same spinning cube using software SPI. No library patch needed, but slower (longer lines = lower FPS).
+- **oled_stats/** — System stats display on SSD1306 I2C OLED. Receives stats via Bridge RPC from `board/oled_stats.py`. Yellow zone for title/IP, blue zone for uptime, CPU temp, memory with bar graph.
+- **tft_term/** — Terminal emulator on TFT. Green-on-black monospace text (40x16). Receives text via Bridge RPC, supports scrolling. Dirty-row tracking for efficient redraws.
+- **tft_weather/** — Weather display on TFT. Shows current temp with weather icon, hi/lo, humidity, wind for Washington, D.C. Data fetched from Open-Meteo by `board/tft_weather.py`.
 
 ## LED Matrix Frame Format
 
@@ -74,7 +80,7 @@ The arduino-router daemon owns `/dev/ttyHS1` exclusively. Scripts on the Linux s
 **MCU side** — Use `Arduino_RouterBridge.h` (NOT `Arduino_RPClite.h`):
 ```cpp
 #include <Arduino_RouterBridge.h>
-Bridge.begin();
+Bridge.begin(460800);
 Bridge.provide("method_name", handler_func);  // registers with router
 ```
 
@@ -109,11 +115,11 @@ ST7789 GRAM offsets for 135x240 panel: `col_offset1=52, row_offset1=40, col_offs
 
 ### Hardware SPI patch
 
-The Arduino_GFX library defaults to `SPI_MODE2` for unknown platforms in `Arduino_ST7789.cpp`. The ST7789 requires `SPI_MODE0`. Patch the installed library:
+The Arduino_GFX library only sets `_override_datamode` for ESP32/ESP8266 in `Arduino_ST7789.cpp`, leaving it unset on Zephyr. The ST7789 requires `SPI_MODE0`. Patch the installed library:
 ```
 ~/Documents/Arduino/libraries/GFX_Library_for_Arduino/src/display/Arduino_ST7789.cpp
 ```
-Change `SPI_MODE2` → `SPI_MODE0` in the `begin()` method. Reinstalling the library will overwrite this patch.
+Add an `#else` clause to set `_override_datamode = SPI_MODE0` in the `begin()` method. Reinstalling the library will overwrite this patch.
 
 ### Performance notes
 
@@ -121,6 +127,16 @@ Change `SPI_MODE2` → `SPI_MODE0` in the `begin()` method. Reinstalling the lib
 - Full-screen framebuffer (240x135, 64KB) is too slow even with HW SPI. Use a partial canvas (160x120) centered on the render area.
 - Fixed-point math (10-bit, 256-entry sine LUT) eliminates all floating-point from the render loop.
 - SW SPI works without patches but is ~10-50x slower — use only as a fallback.
+
+## OLED Display (SSD1306 128x64)
+
+I2C at address 0x3C on Arduino headers. Yellow/blue split panel — top 16 pixels are yellow, bottom 48 are blue (hardware fixed, not software configurable).
+
+Wiring: SDA → SDA, SCL → SCL, VCC → 3.3V, GND → GND.
+
+Library: `Adafruit SSD1306` + `Adafruit GFX Library`. 128x64 framebuffer (~1KB) is allocated internally by the library.
+
+**Memory note**: large static buffers (>64KB) can crash the MCU even though the STM32U585 has 524KB RAM — Zephyr's stack/heap limits are tighter. Keep global allocations under ~40KB.
 
 ## GPS Module (QUESCAN AN252 M10)
 
@@ -155,7 +171,7 @@ This achieves **~2 second** full-frame updates vs ~7.6s with raw pixel transfer.
 - **RPC message size**: 1024 bytes max (patched `Arduino_RPClite` `DEFAULT_RPC_BUFFER_SIZE` from 256 to 1024)
 - **RPC parameter string**: ~950 bytes max before timeout
 - **JPEG chunk size**: 500 bytes reliable (917 byte total message)
-- **Bridge serial**: 115200 baud (LPUART1), higher rates failed
+- **Bridge serial**: 460800 baud (LPUART1), configured via systemd override (see below)
 - **Tile cache**: `/tmp/tile_cache/` on Linux side, survives across script runs but not reboots
 
 ### RPClite buffer patch
@@ -165,6 +181,19 @@ The default `DEFAULT_RPC_BUFFER_SIZE` of 256 bytes severely limits RPC payload s
 ~/Documents/Arduino/libraries/Arduino_RPClite/src/request.h
 ```
 Change `#define DEFAULT_RPC_BUFFER_SIZE (DECODER_BUFFER_SIZE / 4)` → `#define DEFAULT_RPC_BUFFER_SIZE DECODER_BUFFER_SIZE`. Reinstalling the library will overwrite this patch.
+
+### Bridge baud rate override
+
+The default arduino-router service runs at 115200. To use 460800, a systemd override was added on the board:
+```
+/etc/systemd/system/arduino-router.service.d/override.conf
+```
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/bin/arduino-router --unix-port /var/run/arduino-router.sock --serial-port /dev/ttyHS1 --serial-baudrate 460800
+```
+MCU sketches must match with `Bridge.begin(460800)`. After uploading a new sketch, restart the router: `sudo systemctl restart arduino-router`.
 
 ## Board Quirks
 
